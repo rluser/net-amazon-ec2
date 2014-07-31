@@ -410,6 +410,21 @@ sub _build_filters {
 	}
 }
 
+#Split a list into hash entries, this takes a printf string so we can add the iterator anywhere.
+#E.g. _split_into_args('Owner.%s',\%args, \@owners) adds the following to %args:
+#          'Owner.2' => 'account239'
+#          'Owner.1' => 'account743'
+#           ...
+sub _split_into_args {
+	my ( $formatstr, $hashref, $listref ) = @_;
+
+	my $count = 1;
+	foreach my $value ( @{$listref} ) {
+		my $formatedstr = sprintf "$formatstr", $count++;
+		$hashref->{$formatedstr} = $value if defined($value);
+	}
+}
+
 =head1 OBJECT METHODS
 
 =head2 allocate_address()
@@ -1066,11 +1081,7 @@ sub create_tags {
 
         if (ref ($args{'ResourceId'}) eq 'ARRAY') {
                 my $keys                        = delete $args{'ResourceId'};
-                my $count                       = 1;
-                foreach my $key (@{$keys}) {
-                        $args{"ResourceId." . $count} = $key;
-                        $count++;
-                }
+		_split_into_args('ResourceId.%s',\%args,$keys);
         }
         else {
                 $args{"ResourceId.1"} = delete $args{'ResourceId'};
@@ -1078,7 +1089,7 @@ sub create_tags {
 
 	if (ref ($args{'Tags'}) eq 'HASH') {
 		my $count			= 1;
-        my $tags = delete $args{'Tags'};
+		my $tags = delete $args{'Tags'};
 		foreach my $key ( keys %{$tags} ) {
             last if $count > 10;
 			$args{"Tag." . $count . ".Key"} = $key;
@@ -1371,21 +1382,13 @@ sub delete_tags {
 	# If we have a array ref of keys lets split them out into their Tag.n.Key format
 	if (ref ($args{'Tag.Key'}) eq 'ARRAY') {
 		my $keys			= delete $args{'Tag.Key'};
-		my $count			= 1;
-		foreach my $key (@{$keys}) {
-			$args{"Tag." . $count . ".Key"} = $key;
-			$count++;
-		}
+		_split_into_args('Tag.%s.Key',\%args,$keys);
 	}
 
 	# If we have a array ref of values lets split them out into their Tag.n.Value format
 	if (ref ($args{'Tag.Value'}) eq 'ARRAY') {
 		my $values			= delete $args{'Tag.Value'};
-		my $count			= 1;
-		foreach my $value (@{$values}) {
-			$args{"Tag." . $count . ".Value"} = $value;
-			$count++;
-		}
+		_split_into_args('Tag.%s.Value',\%args,$values);
 	}
 
 	my $xml = $self->_sign(Action  => 'DeleteTags', %args);
@@ -1467,11 +1470,7 @@ sub describe_addresses {
 	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
 	if (ref ($args{PublicIp}) eq 'ARRAY') {
 		my $ip_addresses	= delete $args{PublicIp};
-		my $count			= 1;
-		foreach my $ip_address (@{$ip_addresses}) {
-			$args{"PublicIp." . $count} = $ip_address;
-			$count++;
-		}
+		_split_into_args('PublicIp.%s',\%args,$ip_addresses);
 	}
 	
 	my $addresses;
@@ -1523,11 +1522,7 @@ sub describe_availability_zones {
 	# If we have a array ref of zone names lets split them out into their ZoneName.n format
 	if (ref ($args{ZoneName}) eq 'ARRAY') {
 		my $zone_names		= delete $args{ZoneName};
-		my $count			= 1;
-		foreach my $zone_name (@{$zone_names}) {
-			$args{"ZoneName." . $count} = $zone_name;
-			$count++;
-		}
+		_split_into_args('ZoneName.%s',\%args,$zone_names);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeAvailabilityZones', %args);
@@ -1758,31 +1753,19 @@ sub describe_images {
 	# If we have a array ref of instances lets split them out into their ImageId.n format
 	if (ref ($args{ImageId}) eq 'ARRAY') {
 		my $image_ids	= delete $args{ImageId};
-		my $count		= 1;
-		foreach my $image_id (@{$image_ids}) {
-			$args{"ImageId." . $count} = $image_id;
-			$count++;
-		}
+		_split_into_args('ImageId.%s',\%args,$image_ids);
 	}
 	
 	# If we have a array ref of instances lets split them out into their Owner.n format
 	if (ref ($args{Owner}) eq 'ARRAY') {
 		my $owners	= delete $args{Owner};
-		my $count	= 1;
-		foreach my $owner (@{$owners}) {
-			$args{"Owner." . $count} = $owner;
-			$count++;
-		}
+		_split_into_args('Owner.%s',\%args,$owners);
 	}
 
 	# If we have a array ref of instances lets split them out into their ExecutableBy.n format
 	if (ref ($args{ExecutableBy}) eq 'ARRAY') {
 		my $executors	= delete $args{ExecutableBy};
-		my $count		= 1;
-		foreach my $executor (@{$executors}) {
-			$args{"ExecutableBy." . $count} = $executor;
-			$count++;
-		}
+		_split_into_args('ExecutableBy.%s',\%args,$executors);
 	}
 
 	my $xml = $self->_sign(Action  => 'DescribeImages', %args);
@@ -1900,11 +1883,7 @@ sub describe_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count			= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 
 	$self->_build_filters(\%args);
@@ -2200,11 +2179,7 @@ sub describe_key_pairs {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{KeyName}) eq 'ARRAY') {
 		my $keynames	= delete $args{KeyName};
-		my $count		= 1;
-		foreach my $keyname (@{$keynames}) {
-			$args{"KeyName." . $count} = $keyname;
-			$count++;
-		}
+		_split_into_args('KeyName.%s',\%args,$keynames);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeKeyPairs', %args);
@@ -2253,11 +2228,7 @@ sub describe_regions {
 	# If we have a array ref of regions lets split them out into their RegionName.n format
 	if (ref ($args{RegionName}) eq 'ARRAY') {
 		my $regions			= delete $args{RegionName};
-		my $count			= 1;
-		foreach my $region (@{$regions}) {
-			$args{"RegionName." . $count} = $region;
-			$count++;
-		}
+		_split_into_args('RegionName.%s',\%args,$regions);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeRegions', %args);
@@ -2306,11 +2277,7 @@ sub describe_reserved_instances {
 	# If we have a array ref of reserved instances lets split them out into their ReservedInstancesId.n format
 	if (ref ($args{ReservedInstancesId}) eq 'ARRAY') {
 		my $reserved_instance_ids	= delete $args{ReservedInstancesId};
-		my $count					= 1;
-		foreach my $reserved_instance_id (@{$reserved_instance_ids}) {
-			$args{"ReservedInstancesId." . $count} = $reserved_instance_id;
-			$count++;
-		}
+		_split_into_args('ReservedInstancesId.%s',\%args,$reserved_instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeReservedInstances', %args);
@@ -2442,19 +2409,13 @@ sub describe_security_groups {
 	# If we have a array ref of GroupNames lets split them out into their GroupName.n format
 	if (ref ($args{GroupName}) eq 'ARRAY') {
 		my $groups = delete $args{GroupName};
-		my $count = 1;
-		foreach my $group (@{$groups}) {
-			$args{"GroupName." . $count++} = $group;
-		}
+		_split_into_args('GroupName.%s',\%args,$groups);
 	}
 	
 	# If we have a array ref of GroupIds lets split them out into their GroupId.n format
 	if (ref ($args{GroupId}) eq 'ARRAY') {
 		my $groups = delete $args{GroupId};
-		my $count = 1;
-		foreach my $group (@{$groups}) {
-			$args{"GroupId." . $count++} = $group;
-		}
+		_split_into_args('GroupId.%s',\%args,$groups);
 	}
 
 	my $xml = $self->_sign(Action  => 'DescribeSecurityGroups', %args);
@@ -2619,11 +2580,7 @@ sub describe_snapshot_attribute {
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
 	if (ref ($args{SnapshotId}) eq 'ARRAY') {
 		my $snapshots		= delete $args{SnapshotId};
-		my $count			= 1;
-		foreach my $snapshot (@{$snapshots}) {
-			$args{"SnapshotId." . $count} = $snapshot;
-			$count++;
-		}
+		_split_into_args('SnapshotId.%s',\%args,$snapshots);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeSnapshotAttribute', %args);
@@ -2703,11 +2660,7 @@ sub describe_snapshots {
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
 	if (ref ($args{SnapshotId}) eq 'ARRAY') {
 		my $snapshots		= delete $args{SnapshotId};
-		my $count			= 1;
-		foreach my $snapshot (@{$snapshots}) {
-			$args{"SnapshotId." . $count} = $snapshot;
-			$count++;
-		}
+		_split_into_args('SnapshotId.%s',\%args,$snapshots);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
@@ -2772,11 +2725,7 @@ sub describe_volumes {
 	# If we have a array ref of volumes lets split them out into their Volume.n format
 	if (ref ($args{VolumeId}) eq 'ARRAY') {
 		my $volumes		= delete $args{VolumeId};
-		my $count			= 1;
-		foreach my $volume (@{$volumes}) {
-			$args{"VolumeId." . $count} = $volume;
-			$count++;
-		}
+		_split_into_args('VolumeId.%s',\%args,$volumes);
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
@@ -2869,19 +2818,11 @@ sub describe_tags {
 
 	if (ref ($args{'Filter.Name'}) eq 'ARRAY') {
 		my $keys			= delete $args{'Filter.Name'};
-		my $count			= 1;
-		foreach my $key (@{$keys}) {
-			$args{"Filter." . $count . ".Name"} = $key;
-			$count++;
-		}
+		_split_into_args('Filter.%s.Name',\%args,$keys);
 	}
 	if (ref ($args{'Filter.Value'}) eq 'ARRAY') {
 		my $keys			= delete $args{'Filter.Value'};
-		my $count			= 1;
-		foreach my $key (@{$keys}) {
-			$args{"Filter." . $count . ".Value"} = $key;
-			$count++;
-		}
+		_split_into_args('Filter.%s.Value',\%args,$keys);
 	}
 
 	my $xml = $self->_sign(Action  => 'DescribeTags', %args);
@@ -3324,11 +3265,7 @@ sub monitor_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count					= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'MonitorInstances', %args);
@@ -3387,21 +3324,13 @@ sub purchase_reserved_instances_offering {
 	# If we have a array ref of reserved instance offerings lets split them out into their ReservedInstancesOfferingId.n format
 	if (ref ($args{ReservedInstancesOfferingId}) eq 'ARRAY') {
 		my $reserved_instance_offering_ids = delete $args{ReservedInstancesOfferingId};
-		my $count = 1;
-		foreach my $reserved_instance_offering_id (@{$reserved_instance_offering_ids}) {
-			$args{"ReservedInstancesOfferingId." . $count} = $reserved_instance_offering_id;
-			$count++;
-		}
+		_split_into_args('ReservedInstancesOfferingId.%s',\%args,$reserved_instance_offering_ids);
 	}
 
 	# If we have a array ref of instance counts lets split them out into their InstanceCount.n format
 	if (ref ($args{InstanceCount}) eq 'ARRAY') {
 		my $instance_counts = delete $args{InstanceCount};
-		my $count = 1;
-		foreach my $instance_count (@{$instance_counts}) {
-			$args{"InstanceCount." . $count} = $instance_count;
-			$count++;
-		}
+		_split_into_args('InstanceCount.%s',\%args,$instance_counts);
 	}
 	
 	my $xml = $self->_sign(Action  => 'PurchaseReservedInstancesOffering', %args);
@@ -3444,11 +3373,7 @@ sub reboot_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids = delete $args{InstanceId};
-		my $count = 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'RebootInstances', %args);
@@ -4022,81 +3947,49 @@ sub run_instances {
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
 	if (ref ($args{SecurityGroup}) eq 'ARRAY') {
 		my $security_groups	= delete $args{SecurityGroup};
-		my $count			= 1;
-		foreach my $security_group (@{$security_groups}) {
-			$args{"SecurityGroup." . $count} = $security_group;
-			$count++;
-		}
+		_split_into_args('SecurityGroup.%s',\%args,$security_groups);
 	}
 
 	# If we have a array ref of instances lets split them out into their SecurityGroupId.n format
 	if (ref ($args{SecurityGroupId}) eq 'ARRAY') {
 		my $security_groups	= delete $args{SecurityGroupId};
-		my $count			= 1;
-		foreach my $security_group (@{$security_groups}) {
-			$args{"SecurityGroupId." . $count} = $security_group;
-			$count++;
-		}
+		_split_into_args('SecurityGroupId.%s',\%args,$security_groups);
 	}
 
 	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.VirtualName format
 	if (ref ($args{'BlockDeviceMapping.VirtualName'}) eq 'ARRAY') {
 		my $virtual_names	= delete $args{'BlockDeviceMapping.VirtualName'};
-		my $count			= 1;
-		foreach my $virtual_name (@{$virtual_names}) {
-			$args{"BlockDeviceMapping." . $count . ".VirtualName"} = $virtual_name if defined($virtual_name);
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.VirtualName',\%args,$virtual_names);
 	}
 
 	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.DeviceName format
 	if (ref ($args{'BlockDeviceMapping.DeviceName'}) eq 'ARRAY') {
 		my $device_names	= delete $args{'BlockDeviceMapping.DeviceName'};
-		my $count			= 1;
-		foreach my $device_name (@{$device_names}) {
-			$args{"BlockDeviceMapping." . $count . ".DeviceName"} = $device_name if defined($device_name);
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.DeviceName',\%args,$device_names);
 	}
 
 	# If we have a array ref of block device EBS Snapshots lets split them out into their BlockDeviceMapping.n.Ebs.SnapshotId format
 	if (ref ($args{'BlockDeviceMapping.Ebs.SnapshotId'}) eq 'ARRAY') {
 		my $snapshot_ids	= delete $args{'BlockDeviceMapping.Ebs.SnapshotId'};
-		my $count			= 1;
-		foreach my $snapshot_id (@{$snapshot_ids}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.SnapshotId"} = $snapshot_id if defined($snapshot_id);
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.Ebs.SnapshotId',\%args,$snapshot_ids);
 	}
 
 	# If we have a array ref of block device EBS VolumeSizes lets split them out into their BlockDeviceMapping.n.Ebs.VolumeSize format
 	if (ref ($args{'BlockDeviceMapping.Ebs.VolumeSize'}) eq 'ARRAY') {
 		my $volume_sizes	= delete $args{'BlockDeviceMapping.Ebs.VolumeSize'};
-		my $count			= 1;
-		foreach my $volume_size (@{$volume_sizes}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeSize"} = $volume_size if defined($volume_size);
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.Ebs.VolumeSize',\%args,$volume_sizes);
 	}
 
 	# If we have a array ref of block device EBS VolumeTypes lets split them out into their BlockDeviceMapping.n.Ebs.VolumeType format
 	if (ref ($args{'BlockDeviceMapping.Ebs.VolumeType'}) eq 'ARRAY') {
 		my $volume_types	= delete $args{'BlockDeviceMapping.Ebs.VolumeType'};
-		my $count			= 1;
-		foreach my $volume_type (@{$volume_types}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeType"} = $volume_type if defined($volume_type);
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.Ebs.VolumeType',\%args,$volume_types);
 	}
 
 	# If we have a array ref of block device EBS DeleteOnTerminations lets split them out into their BlockDeviceMapping.n.Ebs.DeleteOnTermination format
 	if (ref ($args{'BlockDeviceMapping.Ebs.DeleteOnTermination'}) eq 'ARRAY') {
 		my $terminations	= delete $args{'BlockDeviceMapping.Ebs.DeleteOnTermination'};
-		my $count			= 1;
-		foreach my $termination (@{$terminations}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.DeleteOnTermination"} = $termination;
-			$count++;
-		}
+		_split_into_args('BlockDeviceMapping.%s.Ebs.DeleteOnTermination',\%args,$terminations);
 	}
 
 	my $xml = $self->_sign(Action  => 'RunInstances', %args);
@@ -4240,11 +4133,7 @@ sub start_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count			= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'StartInstances', %args);	
@@ -4312,11 +4201,7 @@ sub stop_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count			= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'StopInstances', %args);	
@@ -4375,11 +4260,7 @@ sub terminate_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count			= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);	
@@ -4442,11 +4323,7 @@ sub unmonitor_instances {
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
-		my $count					= 1;
-		foreach my $instance_id (@{$instance_ids}) {
-			$args{"InstanceId." . $count} = $instance_id;
-			$count++;
-		}
+		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
 	my $xml = $self->_sign(Action  => 'UnmonitorInstances', %args);
