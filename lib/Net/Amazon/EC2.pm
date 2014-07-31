@@ -2176,7 +2176,7 @@ sub describe_key_pairs {
 		KeyName => { type => SCALAR | ARRAYREF, optional => 1 },
 	});
 	
-	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	# If we have a array ref of KeyNames lets split them out into their KeyName.n format
 	if (ref ($args{KeyName}) eq 'ARRAY') {
 		my $keynames	= delete $args{KeyName};
 		_split_into_args('KeyName.%s',\%args,$keynames);
@@ -2722,7 +2722,7 @@ sub describe_volumes {
 		VolumeId	=> { type => ARRAYREF | SCALAR, optional => 1 },
 	});
 
-	# If we have a array ref of volumes lets split them out into their Volume.n format
+	# If we have a array ref of VolumeIds lets split them out into their VolumeId.n format
 	if (ref ($args{VolumeId}) eq 'ARRAY') {
 		my $volumes		= delete $args{VolumeId};
 		_split_into_args('VolumeId.%s',\%args,$volumes);
@@ -3944,13 +3944,13 @@ sub run_instances {
 
 	});
 	
-	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
+	# If we have a array ref of SecurityGroups lets split them out into their SecurityGroup.n format
 	if (ref ($args{SecurityGroup}) eq 'ARRAY') {
 		my $security_groups	= delete $args{SecurityGroup};
 		_split_into_args('SecurityGroup.%s',\%args,$security_groups);
 	}
 
-	# If we have a array ref of instances lets split them out into their SecurityGroupId.n format
+	# If we have a array ref of SecurityGroupIds lets split them out into their SecurityGroupId.n format
 	if (ref ($args{SecurityGroupId}) eq 'ARRAY') {
 		my $security_groups	= delete $args{SecurityGroupId};
 		_split_into_args('SecurityGroupId.%s',\%args,$security_groups);
@@ -3962,7 +3962,7 @@ sub run_instances {
 		_split_into_args('BlockDeviceMapping.%s.VirtualName',\%args,$virtual_names);
 	}
 
-	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.DeviceName format
+	# If we have a array ref of block device device names lets split them out into their BlockDeviceMapping.n.DeviceName format
 	if (ref ($args{'BlockDeviceMapping.DeviceName'}) eq 'ARRAY') {
 		my $device_names	= delete $args{'BlockDeviceMapping.DeviceName'};
 		_split_into_args('BlockDeviceMapping.%s.DeviceName',\%args,$device_names);
