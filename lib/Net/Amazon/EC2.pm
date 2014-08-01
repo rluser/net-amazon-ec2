@@ -2915,9 +2915,13 @@ Disassociates an elastic IP address with an instance. It takes the following arg
 
 =over
 
-=item PublicIp (required)
+=item PublicIp (conditional)
 
-The IP address to disassociate
+The IP address to disassociate, mandatory to remove an IP from a EC2-classic instance.
+
+=item AssociationId (conditional)
+
+The Association ID of an IP address, mandatory to remove an IP from a VPC instance.
 
 =back
 
@@ -2928,7 +2932,8 @@ Returns true if the disassociation succeeded.
 sub disassociate_address {
 	my $self = shift;
 	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR },
+		PublicIp 		=> { type => SCALAR, optional => 1 },
+		AssociationId 		=> { type => SCALAR  optional => 1 },
 	});
 	
 	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
