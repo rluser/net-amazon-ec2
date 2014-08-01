@@ -90,9 +90,9 @@ EC2 Query API version: '2014-06-15'
  my $running_instances = $ec2->describe_instances;
 
  foreach my $reservation (@$running_instances) {
-    foreach my $instance ($reservation->instances_set) {
-        print $instance->instance_id . "\n";
-    }
+	foreach my $instance ($reservation->instances_set) {
+		print $instance->instance_id . "\n";
+	}
  }
 
  my $instance_id = $instance->instances_set->[0]->instance_id;
@@ -307,9 +307,9 @@ sub _sign {
 	my $res	= $ua->post($ur, Content => $content);
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(
-        ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
-        KeyAttr => '',                      # Turn off folding for 'id', 'name', 'key' elements
-        SuppressEmpty => undef,             # Turn empty values into explicit undefs
+	ForceArray => qr/(?:item|Errors)/i,	# Always want item elements unpacked to arrays
+	KeyAttr => '',				# Turn off folding for 'id', 'name', 'key' elements
+	SuppressEmpty => undef,			# Turn empty values into explicit undefs
     );
 	my $xml;
 	
@@ -412,9 +412,9 @@ sub _build_filters {
 
 #Split a list into hash entries, this takes a printf string so we can add the iterator anywhere.
 #E.g. _split_into_args('Owner.%s',\%args, \@owners) adds the following to %args:
-#          'Owner.2' => 'account239'
-#          'Owner.1' => 'account743'
-#           ...
+#	'Owner.2' => 'account239'
+#	'Owner.1' => 'account743'
+#	 ...
 sub _split_into_args {
 	my ( $formatstr, $hashref, $listref ) = @_;
 
@@ -457,16 +457,16 @@ Returns the allocationId of the allocated address.
 =cut
 
 sub allocate_vpc_address {
-        my $self = shift;
+	my $self = shift;
 
-        my $xml = $self->_sign(Action  => 'AllocateAddress', Domain => 'vpc');
+	my $xml = $self->_sign(Action  => 'AllocateAddress', Domain => 'vpc');
 
-        if ( grep { defined && length } $xml->{Errors} ) {
-                return $self->_parse_errors($xml);
-        }
-        else {
-                return $xml->{allocationId};
-        }
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		return $xml->{allocationId};
+	}
 }
 
 =head2 associate_address(%params)
@@ -856,11 +856,11 @@ Array ref of the device names exposed to the instance.
 You can specify device names as '<device>=<block_device>' similar to ec2-create-image command. (L<http://docs.aws.amazon.com/AWSEC2/latest/CommandLineReference/ApiReference-cmd-CreateImage.html>)
 
   BlockDeviceMapping => [
-      '/dev/sda=:256:true:standard',
-      '/dev/sdb=none',
-      '/dev/sdc=ephemeral0',
-      '/dev/sdd=ephemeral1',
-     ],
+	'/dev/sda=:256:true:standard',
+	'/dev/sdb=none',
+	'/dev/sdc=ephemeral0',
+	'/dev/sdd=ephemeral1',
+  ],
 
 =back
 
@@ -1076,22 +1076,22 @@ sub create_tags {
 	my $self = shift;
 	my %args = validate( @_, {
 		ResourceId				=> { type => ARRAYREF | SCALAR },
-		Tags				    => { type => HASHREF },
+		Tags					=> { type => HASHREF },
 	});
 
-        if (ref ($args{'ResourceId'}) eq 'ARRAY') {
-                my $keys                        = delete $args{'ResourceId'};
+	if (ref ($args{'ResourceId'}) eq 'ARRAY') {
+		my $keys				= delete $args{'ResourceId'};
 		_split_into_args('ResourceId.%s',\%args,$keys);
-        }
-        else {
-                $args{"ResourceId.1"} = delete $args{'ResourceId'};
-        }
+	}
+	else {
+		$args{"ResourceId.1"} = delete $args{'ResourceId'};
+	}
 
 	if (ref ($args{'Tags'}) eq 'HASH') {
 		my $count			= 1;
 		my $tags = delete $args{'Tags'};
 		foreach my $key ( keys %{$tags} ) {
-            last if $count > 10;
+		last if $count > 10;
 			$args{"Tag." . $count . ".Key"} = $key;
 			$args{"Tag." . $count . ".Value"} = $tags->{$key};
 			$count++;
@@ -1163,9 +1163,9 @@ sub create_volume {
 		Size				=> { type => SCALAR },
 		SnapshotId			=> { type => SCALAR, optional => 1 },
 		AvailabilityZone	=> { type => SCALAR },
-                VolumeType		=> { type => SCALAR, optional => 1 },
-                Iops			=> { type => SCALAR, optional => 1 },
-                Encrypted               => { type => SCALAR, optional => 1 },
+		VolumeType		=> { type => SCALAR, optional => 1 },
+		Iops			=> { type => SCALAR, optional => 1 },
+		Encrypted		=> { type => SCALAR, optional => 1 },
 
 	});
 
@@ -1966,9 +1966,9 @@ sub describe_instances {
 
 				my $tag_sets;
 				foreach my $tag_arr (@{$instance_elem->{tagSet}{item}}) {
-                    if ( ref $tag_arr->{value} eq "HASH" ) {
-                        $tag_arr->{value} = "";
-                    }
+					if ( ref $tag_arr->{value} eq "HASH" ) {
+						$tag_arr->{value} = "";
+					}
 					my $tag = Net::Amazon::EC2::TagSet->new(
 						key => $tag_arr->{key},
 						value => $tag_arr->{value},
@@ -2545,7 +2545,7 @@ sub describe_security_groups {
 			push @$security_groups, $security_group;
 		}
 		
-		return $security_groups;	
+		return $security_groups;
 	}
 }
 
@@ -2778,7 +2778,7 @@ sub describe_volumes {
 				volume_type		=> $volume_set->{volumeType},
 				iops			=> $volume_set->{iops},
 				encrypted		=> $volume_set->{encrypted},
-				tag_set                 => $tags,
+				tag_set			=> $tags,
 				attachments		=> $attachments,
 			);
 			
@@ -3141,14 +3141,14 @@ passed to AWS.
 
 For example:
 
-  $ec2->modify_instance_attribute(
-        'InstanceId' => $id,
-        'Attribute' => 'blockDeviceMapping',
-        'Value' => {
-            'BlockDeviceMapping.1.DeviceName' => '/dev/sdf1',
-            'BlockDeviceMapping.1.Ebs.DeleteOnTermination' => 'true',
-        }
-  );            
+	$ec2->modify_instance_attribute(
+		'InstanceId' => $id,
+		'Attribute' => 'blockDeviceMapping',
+		'Value' => {
+			'BlockDeviceMapping.1.DeviceName' => '/dev/sdf1',
+			'BlockDeviceMapping.1.Ebs.DeleteOnTermination' => 'true',
+		}
+	);
 
 =back
 
@@ -3164,11 +3164,11 @@ sub modify_instance_attribute {
 		Value		=> { type => SCALAR | HASHREF },
 	});
 
-    if ( ref($args{'Value'}) eq "HASH" ) {
-        # remove the 'Value' key and flatten the hashref
-        my $href = delete $args{'Value'};
-        map { $args{$_} = $href->{$_} } keys %{$href};
-    }
+	if ( ref($args{'Value'}) eq "HASH" ) {
+		# remove the 'Value' key and flatten the hashref
+		my $href = delete $args{'Value'};
+		map { $args{$_} = $href->{$_} } keys %{$href};
+	}
 	
 	my $xml = $self->_sign(Action  => 'ModifyInstanceAttribute', %args);
 
@@ -4141,7 +4141,7 @@ sub start_instances {
 		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
-	my $xml = $self->_sign(Action  => 'StartInstances', %args);	
+	my $xml = $self->_sign(Action  => 'StartInstances', %args);
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -4209,7 +4209,7 @@ sub stop_instances {
 		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
-	my $xml = $self->_sign(Action  => 'StopInstances', %args);	
+	my $xml = $self->_sign(Action  => 'StopInstances', %args);
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -4268,7 +4268,7 @@ sub terminate_instances {
 		_split_into_args('InstanceId.%s',\%args,$instance_ids);
 	}
 	
-	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);	
+	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
