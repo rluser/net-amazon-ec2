@@ -2053,6 +2053,8 @@ The attribute we want to describe. Valid values are:
 
 =item * disableApiTermination
 
+=item * ebsOptimized
+
 =item * instanceInitiatedShutdownBehavior
 
 =item * rootDeviceName
@@ -2114,6 +2116,12 @@ sub describe_instance_attribute {
 			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
 				instance_id				=> $xml->{instanceId},
 				disable_api_termination	=> $xml->{disableApiTermination}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'ebsOptimized' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id				=> $xml->{instanceId},
+				ebs_optimized		=> $xml->{ebsOptimized}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'instanceInitiatedShutdownBehavior' ) {

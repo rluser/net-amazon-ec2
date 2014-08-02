@@ -28,6 +28,10 @@ object.
 Specifies whether the instance can be terminated. You must modify this attribute 
 before you can terminate any "locked" instances.
 
+=item ebsOptimized (optional)
+
+Specifies whether the instance is optimized for EBS.
+
 =item instance_initiated_shutdown_behavior (optional)
 
 Specifies whether the instance's Amazon EBS volumes are deleted when the instance 
@@ -63,6 +67,7 @@ MIME, Base64-encoded user data.
 
 has 'instance_id'							=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'disable_api_termination'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'ebs_optimized'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'instance_initiated_shutdown_behavior'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'instance_type'							=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'kernel'								=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
