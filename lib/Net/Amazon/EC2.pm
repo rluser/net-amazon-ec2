@@ -2933,7 +2933,7 @@ sub disassociate_address {
 	my $self = shift;
 	my %args = validate( @_, {
 		PublicIp 		=> { type => SCALAR, optional => 1 },
-		AssociationId 		=> { type => SCALAR  optional => 1 },
+		AssociationId 		=> { type => SCALAR, optional => 1 },
 	});
 	
 	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
