@@ -49,6 +49,10 @@ The RAM disk ID.
 
 The root device name (e.g., /dev/sda1).
 
+=item source_dest_check (optional)
+
+Source and destination checking for incoming traffic
+
 =item user_data (optional)
 
 MIME, Base64-encoded user data. 
@@ -64,6 +68,7 @@ has 'instance_type'							=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'kernel'								=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'ramdisk'								=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'root_device_name'						=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'source_dest_check'						=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'user_data'								=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'block_device_mapping'					=> ( 
     is          => 'ro', 

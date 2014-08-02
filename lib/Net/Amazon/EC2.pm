@@ -2057,6 +2057,8 @@ The attribute we want to describe. Valid values are:
 
 =item * rootDeviceName
 
+=item * sourceDestCheck
+
 =item * blockDeviceMapping
 
 =back 
@@ -2124,6 +2126,12 @@ sub describe_instance_attribute {
 			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
 				instance_id			=> $xml->{instanceId},
 				root_device_name	=> $xml->{rootDeviceName}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'sourceDestCheck' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id			=> $xml->{instanceId},
+				source_dest_check		=> $xml->{sourceDestCheck}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'blockDeviceMapping' ) {
