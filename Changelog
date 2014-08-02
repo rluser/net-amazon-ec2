@@ -1,3 +1,7 @@
+0.27   2014-07-31
+       Stephen Day      Added egress rules to describe_security_groups
+       Stephen Day      Add allocate_vpc_address plus minor documentation changes.
+
 0.26   2014-07-23
        Jennine Townsend Allow undef in block device mappings
        Stephen Day      Bump API to version '2014-06-15'
