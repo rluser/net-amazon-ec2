@@ -21,18 +21,31 @@ The AWS Access Key ID of the owner of the security group.
 
 The name of the security group.
 
+=item group_id (required)
+
+The id of the security group.
+
 =item group_description (required)
 
 The description of the security group.
 
 =item ip_permissions (optional)
 
-An array ref of Net::Amazon::EC2::IpPermission objects.
+An array ref of Net::Amazon::EC2::IpPermission objects for ingress.
+
+=item ip_permissions_egress (optional)
+
+An array ref of Net::Amazon::EC2::IpPermission objects for egress.
+
+=item vpc_id (optional)
+
+The VPC id of the corresponding security group
 
 =cut
 
 has 'owner_id'          => ( is => 'ro', isa => 'Str', required => 1 );
 has 'group_name'        => ( is => 'ro', isa => 'Str', required => 1 );
+has 'group_id'          => ( is => 'ro', isa => 'Str', required => 1 );
 has 'group_description' => ( is => 'ro', isa => 'Str', required => 1 );
 has 'ip_permissions'    => ( 
     is          => 'ro', 
@@ -40,8 +53,17 @@ has 'ip_permissions'    => (
     predicate   => 'has_ip_permissions',
     default		=> sub { [ ] },
 );
+has 'ip_permissions_egress' => ( 
+    is          => 'ro', 
+    isa         => 'Maybe[ArrayRef[Net::Amazon::EC2::IpPermission]]',
+    predicate   => 'has_ip_permissions_egress',
+    default		=> sub { [ ] },
+);
+has 'vpc_id'           => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
+
+=back
 
 =head1 AUTHOR
 

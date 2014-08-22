@@ -35,7 +35,7 @@ is shut down.
 
 =item instance_type (optional)
 
-The instance type (e.g., m1.small, c1.medium, m2.2xlarge, and so on).
+The instance type (e.g., m1.small, t2.medium, m3.xlarge, and so on).
 
 =item kernel (optional)
 

@@ -6,12 +6,15 @@ use vars qw($VERSION);
 
 use XML::Simple;
 use LWP::UserAgent;
-use Digest::HMAC_SHA1;
+use LWP::Protocol::https;
+use Digest::SHA qw(hmac_sha256);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
-use HTTP::Date qw(time2isoz);
-use Params::Validate qw(validate SCALAR ARRAYREF);
+use POSIX qw(strftime);
+use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
 use Data::Dumper qw(Dumper);
+use URI::Escape qw(uri_escape_utf8);
+use Carp;
 
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
@@ -58,8 +61,13 @@ use Net::Amazon::EC2::EbsInstanceBlockDeviceMapping;
 use Net::Amazon::EC2::EbsBlockDevice;
 use Net::Amazon::EC2::TagSet;
 use Net::Amazon::EC2::DescribeTags;
+use Net::Amazon::EC2::Details;
+use Net::Amazon::EC2::Events;
+use Net::Amazon::EC2::InstanceStatus;
+use Net::Amazon::EC2::InstanceStatuses;
+use Net::Amazon::EC2::SystemStatus;
 
-$VERSION = '0.15';
+$VERSION = '0.29_01';
 
 =head1 NAME
 
@@ -68,9 +76,9 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.14 of Net::Amazon::EC2, released
-February 1st, 2010. This module is coded against the Query API version of the '2011-01-01' 
-version of the EC2 API last updated January 1st, 2011.
+This is Net::Amazon::EC2 version 0.29
+
+EC2 Query API version: '2014-06-15'
 
 =head1 SYNOPSIS
 
@@ -100,77 +108,107 @@ version of the EC2 API last updated January 1st, 2011.
 
  my $result = $ec2->terminate_instances(InstanceId => $instance_id);
 
-If an error occurs while communicating with EC2, the return value of these methods will be a Net::Amazon::EC2::Errors object.
+If an error occurs while communicating with EC2, these methods will 
+throw a L<Net::Amazon::EC2::Errors> exception.
 
 =head1 DESCRIPTION
 
-This module is a Perl interface to Amazon's Elastic Compute Cloud. It uses the Query API to communicate with Amazon's Web Services framework.
+This module is a Perl interface to Amazon's Elastic Compute Cloud. It uses the Query API to 
+communicate with Amazon's Web Services framework.
 
 =head1 CLASS METHODS
 
 =head2 new(%params)
 
-This is the constructor, it will return you a Net::Amazon::EC2 object to work with.  It takes these parameters:
+This is the constructor, it will return you a Net::Amazon::EC2 object to work with.  It takes 
+these parameters:
 
 =over
 
-=item AWSAccessKeyId (required)
+=item AWSAccessKeyId (required, unless an IAM role is present)
 
-Your AWS access key.
+Your AWS access key.  For information on IAM roles, see L<http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UsingIAM.html#UsingIAMrolesWithAmazonEC2Instances>
 
-=item SecretAccessKey (required)
+=item SecretAccessKey (required, unless an IAM role is present)
 
-Your secret key, WARNING! don't give this out or someone will be able to use your account and incur charges on your behalf.
+Your secret key, B<WARNING!> don't give this out or someone will be able to use your account 
+and incur charges on your behalf.
+
+=item SecurityToken (optional)
+
+When using temporary credentials from STS the Security Token must be passed
+in along with the temporary AWSAccessKeyId and SecretAccessKey.  The most common case is when using IAM credentials with the addition of MFA (multi-factor authentication).  See L<http://docs.aws.amazon.com/STS/latest/UsingSTS/Welcome.html>
 
 =item region (optional)
 
-The region to run the API requests through. The options are:
-
-=over
-
-=item * us-east-1 - Nothern Virginia
-
-=item * us-west-1 - Northern California
-
-=item * eu-west-1 - Ireland
-
-=back
+The region to run the API requests through. Defaults to us-east-1.
 
 =item ssl (optional)
 
-If set to a true value, the base_url will use https:// instead of http://. Setting base_url explicitly will override this. Use depends on LWP::Protocol::https; if not installed it will die at runtime trying to fetch the url.
-
-=back
+If set to a true value, the base_url will use https:// instead of http://. Setting base_url 
+explicitly will override this. Defaults to true as of 0.22.
 
 =item debug (optional)
 
-A flag to turn on debugging. It is turned off by default
+A flag to turn on debugging. Among other useful things, it will make the failing api calls print 
+a stack trace. It is turned off by default.
+
+=item return_errors (optional)
+
+Previously, Net::Amazon::EC2 would return a L<Net::Amazon::EC2::Errors> 
+object when it encountered an error condition. As of 0.19, this 
+object is thrown as an exception using croak or confess depending on
+if the debug flag is set.
+
+If you want/need the old behavior, set this attribute to a true value.
 
 =back
 
 =cut
 
-has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2011-01-01' );
-has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
-has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 0 );
-has 'timestamp'			=> ( 
-	is			=> 'ro', 
-	isa			=> 'Str', 
-	required	=> 1, 
-	lazy		=> 1,
-        clearer		=> '_clear_timestamp',
-	default		=> sub { 
-		my $ts = time2isoz(); 
-		chop($ts); 
-		$ts .= '.000Z'; 
-		$ts =~ s/\s+/T/g; 
-		return $ts; 
-	} 
+has 'AWSAccessKeyId'	=> ( is => 'ro',
+			     isa => 'Str',
+			     required => 1,
+			     lazy => 1,
+			     default => sub {
+				 if (defined($_[0]->temp_creds)) {
+				     return $_[0]->temp_creds->{'AccessKeyId'};
+				 } else {
+				     return undef;
+				 }
+			     }
 );
+has 'SecretAccessKey'	=> ( is => 'ro',
+			     isa => 'Str',
+			     required => 1,
+			     lazy => 1,
+			     default => sub {
+				 if (defined($_[0]->temp_creds)) {
+				     return $_[0]->temp_creds->{'SecretAccessKey'};
+				 } else {
+				     return undef;
+				 }
+			     }
+);
+has 'SecurityToken'	=> ( is => 'ro',
+			     isa => 'Str',
+			     required => 0,
+			     lazy => 1,
+			     predicate => 'has_SecurityToken',
+			     default => sub {
+				 if (defined($_[0]->temp_creds)) {
+				     return $_[0]->temp_creds->{'Token'};
+				 } else {
+				     return undef;
+				 }
+			     }
+);
+has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
+has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 2 );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
+has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
+has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
+has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
 has 'base_url'			=> ( 
 	is			=> 'ro', 
 	isa			=> 'Str', 
@@ -180,45 +218,104 @@ has 'base_url'			=> (
 		return 'http' . ($_[0]->ssl ? 's' : '') . '://' . $_[0]->region . '.ec2.amazonaws.com';
 	}
 );
+has 'temp_creds'       => ( is => 'ro',
+			     lazy => 1,
+			     default => sub {
+				 my $ret;
+				 $ret = $_[0]->_fetch_iam_security_credentials();
+			     },
+			     predicate => 'has_temp_creds'
+);
+
+
+sub timestamp {
+    return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
+}
+
+sub _fetch_iam_security_credentials {
+    my $self = shift;
+    my $retval = {};
+
+    my $ua = LWP::UserAgent->new();
+    # Fail quickly if this is not running on an EC2 instance
+    $ua->timeout(2);
+
+    my $url = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/';
+    
+    $self->_debug("Attempting to fetch instance credentials");
+
+    my $res = $ua->get($url);
+    if ($res->code == 200) {
+	# Assumes the first profile is the only profile
+	my $profile = (split /\n/, $res->content())[0];
+
+	$res = $ua->get($url . $profile);
+
+	if ($res->code == 200) {
+	    $retval->{'Profile'} = $profile;
+	    foreach (split /\n/, $res->content()) {
+		return undef if /Code/ && !/Success/;
+		if (m/.*"([^"]+)"\s+:\s+"([^"]+)",/) {
+		    $retval->{$1} = $2;
+		}
+	    }
+
+	    return $retval if (keys %{$retval});
+	}
+	 
+    }
+   
+    return undef;
+}
 
 sub _sign {
 	my $self						= shift;
 	my %args						= @_;
 	my $action						= delete $args{Action};
 	my %sign_hash					= %args;
-        $self->_clear_timestamp;
+	my $timestamp					= $self->timestamp;
+
 	$sign_hash{AWSAccessKeyId}		= $self->AWSAccessKeyId;
 	$sign_hash{Action}				= $action;
-	$sign_hash{Timestamp}			= $self->timestamp;
+	$sign_hash{Timestamp}			= $timestamp;
 	$sign_hash{Version}				= $self->version;
 	$sign_hash{SignatureVersion}	= $self->signature_version;
-	my $sign_this;
-
-	# The sign string must be alphabetical in a case-insensitive manner.
-	foreach my $key (sort { lc($a) cmp lc($b) } keys %sign_hash) {
-		$sign_this .= $key . $sign_hash{$key};
+    $sign_hash{SignatureMethod}     = "HmacSHA256";
+	if ($self->has_temp_creds || $self->has_SecurityToken) {
+	    $sign_hash{SecurityToken} = $self->SecurityToken;
 	}
+
+
+	my $sign_this = "POST\n";
+	my $uri = URI->new($self->base_url);
+
+    $sign_this .= lc($uri->host) . "\n";
+    $sign_this .= "/\n";
+
+    my @signing_elements;
+
+	foreach my $key (sort keys %sign_hash) {
+		push @signing_elements, uri_escape_utf8($key)."=".uri_escape_utf8($sign_hash{$key});
+	}
+
+    $sign_this .= join "&", @signing_elements;
 
 	$self->_debug("QUERY TO SIGN: $sign_this");
 	my $encoded = $self->_hashit($self->SecretAccessKey, $sign_this);
 
-	my $uri = URI->new($self->base_url);
-	my %params = (
-		Action				=> $action,
-		SignatureVersion	=> $self->signature_version,
-		AWSAccessKeyId		=> $self->AWSAccessKeyId,
-		Timestamp			=> $self->timestamp,
-		Version				=> $self->version,
-		Signature			=> $encoded,
-		%args
-	);
-	
+    my $content = join "&", @signing_elements, 'Signature=' . uri_escape_utf8($encoded);
+
 	my $ur	= $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
 	my $ua	= LWP::UserAgent->new();
-	my $res	= $ua->post($ur, \%params);
+    $ua->env_proxy;
+	my $res	= $ua->post($ur, Content => $content);
 	# We should force <item> elements to be in an array
-	my $xs	= XML::Simple->new(ForceArray => qr/(?:item|Errors)/i, KeyAttr => '');
+	my $xs	= XML::Simple->new(
+        ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
+        KeyAttr => '',                      # Turn off folding for 'id', 'name', 'key' elements
+        SuppressEmpty => undef,             # Turn empty values into explicit undefs
+    );
 	my $xml;
 	
 	# Check the result for connectivity problems, if so throw an error
@@ -271,8 +368,18 @@ sub _parse_errors {
 	foreach my $error (@{$errors->errors}) {
 		$self->_debug("ERROR CODE: " . $error->code . " MESSAGE: " . $error->message . " FOR REQUEST: " . $errors->request_id);
 	}
-	
-	return $errors;	
+
+	# User wants old behaviour
+	if ($self->return_errors) {
+		return $errors;
+	}
+
+	# Print a stack trace if debugging is enabled
+	if ($self->debug) {
+		confess 'Last error was: ' . $es->[-1]->message;
+	} else {
+		croak $errors;
+	}
 }
 
 sub _debug {
@@ -288,19 +395,31 @@ sub _debug {
 sub _hashit {
 	my $self								= shift;
 	my ($secret_access_key, $query_string)	= @_;
-	my $hashed								= Digest::HMAC_SHA1->new($secret_access_key);
-	$hashed->add($query_string);
 	
-	my $encoded = encode_base64($hashed->digest, '');
+	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+}
 
-	return $encoded;
+sub _build_filters {
+	my ($self, $args) = @_;
+	my $filters	= delete $args->{Filter};
+
+	return unless $filters && ref($filters) eq 'ARRAY';
+
+	$filters	= [ $filters ] unless ref($filters->[0]) eq 'ARRAY';
+	my $count	= 1;
+	foreach my $filter (@{$filters}) {
+		my ($name, @args) = @$filter;
+		$args->{"Filter." . $count.".Name"} = $name;
+		$args->{"Filter." . $count.".Value.".$_} = $args[$_-1] for 1..scalar @args;
+		$count++;
+	}
 }
 
 =head1 OBJECT METHODS
 
 =head2 allocate_address()
 
-Acquires an elastic IP address which can be associated with an instance to create a movable static IP. Takes no arguments
+Acquires an elastic IP address which can be associated with an EC2-classic instance to create a movable static IP. Takes no arguments.
 
 Returns the IP address obtained.
 
@@ -319,6 +438,27 @@ sub allocate_address {
 	}
 }
 
+=head2 allocate_vpc_address()
+
+Acquires an elastic IP address which can be associated with a VPC instance to create a movable static IP. Takes no arguments.
+
+Returns the allocationId of the allocated address.
+
+=cut
+
+sub allocate_vpc_address {
+        my $self = shift;
+
+        my $xml = $self->_sign(Action  => 'AllocateAddress', Domain => 'vpc');
+
+        if ( grep { defined && length } $xml->{Errors} ) {
+                return $self->_parse_errors($xml);
+        }
+        else {
+                return $xml->{allocationId};
+        }
+}
+
 =head2 associate_address(%params)
 
 Associates an elastic IP address with an instance. It takes the following arguments:
@@ -329,9 +469,13 @@ Associates an elastic IP address with an instance. It takes the following argume
 
 The instance id you wish to associate the IP address with
 
-=item PublicIp (required)
+=item PublicIp (optional)
 
-The IP address to associate with
+The IP address. Used for allocating addresses to EC2-classic instances.
+
+=item AllocationId (optional)
+
+The allocation ID.  Used for allocating address to VPC instances.
 
 =back
 
@@ -343,7 +487,8 @@ sub associate_address {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId		=> { type => SCALAR },
-		PublicIp 		=> { type => SCALAR },
+		PublicIp 		=> { type => SCALAR, optional => 1 },
+		AllocationId		=> { type => SCALAR, optional => 1 },
 	});
 	
 	my $xml = $self->_sign(Action  => 'AssociateAddress', %args);
@@ -421,7 +566,7 @@ This method adds permissions to a security group.  It takes the following parame
 
 The name of the group to add security rules to.
 
-=item SourceSecurityGroupName (requred when authorizing a user and group together)
+=item SourceSecurityGroupName (required when authorizing a user and group together)
 
 Name of the group to add access for.
 
@@ -447,7 +592,8 @@ The CIDR IP space we are adding access for.
 
 =back
 
-Adding a rule can be done in two ways: adding a source group name + source group owner id, or, by Protocol + start port + end port + CIDR IP.  The two are mutally exclusive.
+Adding a rule can be done in two ways: adding a source group name + source group owner id, or, 
+CIDR IP range. Both methods allow IP protocol, from port and to port specifications.
 
 Returns 1 if rule is added successfully.
 
@@ -465,7 +611,7 @@ sub authorize_security_group_ingress {
 		SourceSecurityGroupOwnerId	=> { type => SCALAR, optional => 1 },
 		IpProtocol 					=> { 
 			type => SCALAR,
-			depends => ['FromPort', 'ToPort', 'CidrIp'],
+			depends => ['FromPort', 'ToPort'],
 			optional => 1 
 		},
 		FromPort 					=> { type => SCALAR, optional => 1 },
@@ -693,6 +839,19 @@ instance before image creation and reboots the instance afterwards. When set to 
 does not shut down the instance before creating the image. When this option is used, file system 
 integrity on the created image cannot be guaranteed. 
 
+=item BlockDeviceMapping (optional)
+
+Array ref of the device names exposed to the instance.
+
+You can specify device names as '<device>=<block_device>' similar to ec2-create-image command. (L<http://docs.aws.amazon.com/AWSEC2/latest/CommandLineReference/ApiReference-cmd-CreateImage.html>)
+
+  BlockDeviceMapping => [
+      '/dev/sda=:256:true:standard',
+      '/dev/sdb=none',
+      '/dev/sdc=ephemeral0',
+      '/dev/sdd=ephemeral1',
+     ],
+
 =back
 
 Returns the ID of the AMI created.
@@ -702,12 +861,43 @@ Returns the ID of the AMI created.
 sub create_image {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId	=> { type => SCALAR },
-		Name		=> { type => SCALAR },
-		Description	=> { type => SCALAR, optional => 1 },
-		NoReboot	=> { type => SCALAR, optional => 1 },
+		InstanceId			=> { type => SCALAR },
+		Name				=> { type => SCALAR },
+		Description			=> { type => SCALAR, optional => 1 },
+		NoReboot			=> { type => SCALAR, optional => 1 },
+		BlockDeviceMapping	=> { type => ARRAYREF, optional => 1 },
 	});
 		
+
+	if (my $bdm = delete $args{BlockDeviceMapping}) {
+		my $n = 0;
+		for my $bdme (@$bdm) {
+			my($device, $block_device) = split /=/, $bdme, 2;
+			$args{"BlockDeviceMapping.${n}.DeviceName"} = $device;
+
+			if ($block_device =~ /^ephemeral[0-9]+$/) {
+				$args{"BlockDeviceMapping.${n}.VirtualName"} = $block_device;
+			} elsif ($block_device eq 'none') {
+				$args{"BlockDeviceMapping.${n}.NoDevice"} = '';
+			} else {
+				my @keys = qw(
+								 Ebs.SnapshotId
+								 Ebs.VolumeSize
+								 Ebs.DeleteOnTermination
+								 Ebs.VolumeType
+								 Ebs.Iops
+							);
+				for my $bde (split /:/, $block_device) {
+					my $key = shift @keys;
+					next unless $bde;
+					$args{"BlockDeviceMapping.${n}.${key}"} = $bde;
+				}
+			}
+
+			$n++;
+		}
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateImage', %args);
 
 	if ( grep { defined && length } $xml->{Errors} ) {
@@ -860,19 +1050,15 @@ Creates tags.
 
 =item ResourceId (required)
 
-The ID of the resource to create tags
+The ID of the resource to create tags. Can be a scalar or arrayref
 
-=item Tag.Key (required)
+=item Tags (required)
 
-Key for a tag, may pass in a scalar or arrayref.
-
-=item Tag.Value (required)
-
-Value for a tag, may pass in a scalar or arrayref.
+Hashref where keys and values will be set on all resources given in the first element.
 
 =back
 
-Returns true if the releasing succeeded.
+Returns true if the tag creation succeeded.
 
 =cut
 
@@ -880,8 +1066,7 @@ sub create_tags {
 	my $self = shift;
 	my %args = validate( @_, {
 		ResourceId				=> { type => ARRAYREF | SCALAR },
-		'Tag.Key'				=> { type => ARRAYREF | SCALAR },
-		'Tag.Value'				=> { type => ARRAYREF | SCALAR },
+		Tags				    => { type => HASHREF },
 	});
 
         if (ref ($args{'ResourceId'}) eq 'ARRAY') {
@@ -896,22 +1081,13 @@ sub create_tags {
                 $args{"ResourceId.1"} = delete $args{'ResourceId'};
         }
 
-	# If we have a array ref of keys lets split them out into their Tag.n.Key format
-	if (ref ($args{'Tag.Key'}) eq 'ARRAY') {
-		my $keys			= delete $args{'Tag.Key'};
+	if (ref ($args{'Tags'}) eq 'HASH') {
 		my $count			= 1;
-		foreach my $key (@{$keys}) {
+        my $tags = delete $args{'Tags'};
+		foreach my $key ( keys %{$tags} ) {
+            last if $count > 10;
 			$args{"Tag." . $count . ".Key"} = $key;
-			$count++;
-		}
-	}
-
-	# If we have a array ref of values lets split them out into their Tag.n.Value format
-	if (ref ($args{'Tag.Value'}) eq 'ARRAY') {
-		my $values			= delete $args{'Tag.Value'};
-		my $count			= 1;
-		foreach my $value (@{$values}) {
-			$args{"Tag." . $count . ".Value"} = $value;
+			$args{"Tag." . $count . ".Value"} = $tags->{$key};
 			$count++;
 		}
 	}
@@ -939,15 +1115,34 @@ Creates a volume.
 
 =item Size (required)
 
-The size in GiB of the volume you want to create.
+The size in GiB ( 1024^3 ) of the volume you want to create.
 
 =item SnapshotId (optional)
 
-The optional snapshot id to create the volume from.
+The optional snapshot id to create the volume from. The volume must
+be equal or larger than the snapshot it was created from.
 
 =item AvailabilityZone (required)
 
 The availability zone to create the volume in.
+
+=item VolumeType (optional)
+
+The volume type: 'standard', 'gp2', or 'io1'.  Defaults to 'standard'.
+
+=item Iops (required if VolumeType is 'io1')
+
+The number of I/O operations per second (IOPS) that the volume
+supports. This is limited to 30 times the volume size with an absolute maximum
+of 4000. It's likely these numbers will change in the future.
+
+Required when the volume type is io1; not used otherwise.
+
+=item Encrypted (optional)
+
+Encrypt the volume. EBS encrypted volumes are encrypted on the host using
+AWS managed keys. Only some instance types support encrypted volumes. At the
+time of writing encrypted volumes are not supported for boot volumes.
 
 =back
 
@@ -962,6 +1157,10 @@ sub create_volume {
 		Size				=> { type => SCALAR },
 		SnapshotId			=> { type => SCALAR, optional => 1 },
 		AvailabilityZone	=> { type => SCALAR },
+                VolumeType		=> { type => SCALAR, optional => 1 },
+                Iops			=> { type => SCALAR, optional => 1 },
+                Encrypted               => { type => SCALAR, optional => 1 },
+
 	});
 
 	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
@@ -983,6 +1182,9 @@ sub create_volume {
 			create_time		=> $xml->{createTime},
 			snapshot_id		=> $xml->{snapshotId},
 			size			=> $xml->{size},
+			volume_type		=> $xml->{volumeType},
+			iops			=> $xml->{iops},
+			encrypted		=> $xml->{encrypted},
 		);
 
 		return $volume;
@@ -1072,8 +1274,7 @@ Deletes the snapshots passed in. It takes the following arguments:
 
 =item SnapshotId (required)
 
-Either a scalar or array ref of snapshot id's can be passed in. Will delete the corresponding
-snapshots.
+A snapshot id can be passed in. Will delete the corresponding snapshot.
 
 =back
 
@@ -1084,22 +1285,11 @@ Returns true if the deleting succeeded.
 sub delete_snapshot {
 	my $self = shift;
 	my %args = validate( @_, {
-		SnapshotId	=> { type => ARRAYREF | SCALAR },
+		SnapshotId	=> { type => SCALAR },
 	});
 
-	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
-	if (ref ($args{SnapshotId}) eq 'ARRAY') {
-		my $snapshots		= delete $args{SnapshotId};
-		my $count			= 1;
-		foreach my $snapshot (@{$snapshots}) {
-			$args{"SnapshotId." . $count} = $snapshot;
-			$count++;
-		}
-	}
-	
 	my $xml = $self->_sign(Action  => 'DeleteSnapshot', %args);
 
-	
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1644,6 +1834,7 @@ sub describe_images {
 					push @$block_device_mappings, $block_device_mapping;
 				}
 			}
+			$item->{description} = undef if ref ($item->{description});
 
 			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
 				image_id				=> $item->{imageId},
@@ -1692,6 +1883,12 @@ This method pulls a list of the instances which are running or were just running
 
 Either a scalar or an array ref can be passed in, will cause just these instances to be 'described'
 
+=item Filter (optional)
+
+The filters for only the matching instances to be 'described'.
+A filter tuple is an arrayref constsing one key and one or more values.
+The option takes one filter tuple, or an arrayref of multiple filter tuples.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::ReservationInfo objects
@@ -1701,7 +1898,8 @@ Returns an array ref of Net::Amazon::EC2::ReservationInfo objects
 sub describe_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
+		InstanceId	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		Filter		=> { type => ARRAYREF, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -1713,7 +1911,8 @@ sub describe_instances {
 			$count++;
 		}
 	}
-	
+
+	$self->_build_filters(\%args);
 	my $xml = $self->_sign(Action  => 'DescribeInstances', %args);
 	my $reservations;
 	
@@ -1722,7 +1921,7 @@ sub describe_instances {
 	}
 	else {
 		foreach my $reservation_set (@{$xml->{reservationSet}{item}}) {
-			my $group_sets;
+			my $group_sets=[];
 			foreach my $group_arr (@{$reservation_set->{groupSet}{item}}) {
 				my $group = Net::Amazon::EC2::GroupSet->new(
 					group_id => $group_arr->{groupId},
@@ -1793,6 +1992,9 @@ sub describe_instances {
 
 				my $tag_sets;
 				foreach my $tag_arr (@{$instance_elem->{tagSet}{item}}) {
+                    if ( ref $tag_arr->{value} eq "HASH" ) {
+                        $tag_arr->{value} = "";
+                    }
 					my $tag = Net::Amazon::EC2::TagSet->new(
 						key => $tag_arr->{key},
 						value => $tag_arr->{value},
@@ -1849,6 +2051,146 @@ sub describe_instances {
 	}
 
 	return $reservations;
+}
+
+=head2 describe_instance_status(%params)
+
+This method pulls a list of the instances based on some status filter.  The list can be modified by passing in some of the following parameters:
+
+=over
+
+=item InstanceId (optional)
+
+Either a scalar or an array ref can be passed in, will cause just these instances to be 'described'
+
+=item Filter (optional)
+
+The filters for only the matching instances to be 'described'.
+A filter tuple is an arrayref constsing one key and one or more values.
+The option takes one filter tuple, or an arrayref of multiple filter tuples.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::InstanceStatuses objects
+
+=cut
+
+sub describe_instance_status {
+    my $self = shift;
+    my %args = validate(
+        @_,
+        {
+            InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
+            Filter     => { type => ARRAYREF,          optional => 1 },
+        }
+    );
+
+# If we have a array ref of instances lets split them out into their InstanceId.n format
+    if ( ref( $args{InstanceId} ) eq 'ARRAY' ) {
+        my $instance_ids = delete $args{InstanceId};
+        my $count        = 1;
+        foreach my $instance_id ( @{$instance_ids} ) {
+            $args{ "InstanceId." . $count } = $instance_id;
+            $count++;
+        }
+    }
+
+    $self->_build_filters( \%args );
+    my $xml = $self->_sign( Action => 'DescribeInstanceStatus', %args );
+    my $instancestatuses;
+
+    if ( grep { defined && length } $xml->{Errors} ) {
+        return $self->_parse_errors($xml);
+    }
+    else {
+        foreach my $instancestatus_elem ( @{ $xml->{instanceStatusSet}{item} } )
+        {
+            my $group_sets = [];
+
+            my $instancestatus_state = Net::Amazon::EC2::InstanceState->new(
+                code => $instancestatus_elem->{instanceState}{code},
+                name => $instancestatus_elem->{instanceState}{name},
+            );
+
+            foreach
+              my $events_arr ( @{ $instancestatus_elem->{eventsSet}{item} } )
+            {
+                my $events;
+                if ( grep { defined && length } $events_arr->{notAfter} ) {
+                    $events = Net::Amazon::EC2::Events->new(
+                        code        => $events_arr->{code},
+                        description => $events_arr->{description},
+                        not_before  => $events_arr->{notBefore},
+                        not_after   => $events_arr->{notAfter},
+                    );
+                }
+                else {
+                    $events = Net::Amazon::EC2::Events->new(
+                        code        => $events_arr->{code},
+                        description => $events_arr->{description},
+                        not_before  => $events_arr->{notBefore},
+                    );
+                }
+                push @$group_sets, $events;
+            }
+
+            my $instancestatus_istatus;
+            if ( grep { defined && length }
+                $instancestatus_elem->{instanceStatus} )
+            {
+                my $details_set = [];
+                foreach my $details_arr (
+                    @{ $instancestatus_elem->{instanceStatus}{details}{item} } )
+                {
+                    my $details = Net::Amazon::EC2::Details->new(
+                        status => $details_arr->{status},
+                        name   => $details_arr->{name},
+                    );
+                    push @$details_set, $details;
+                }
+                $instancestatus_istatus =
+                  Net::Amazon::EC2::InstanceStatus->new(
+                    status  => $instancestatus_elem->{instanceStatus}{status},
+                    details => $details_set,
+                  );
+            }
+
+            my $instancestatus_sstatus;
+            if ( grep { defined && length }
+                $instancestatus_elem->{systemStatus} )
+            {
+                my $details_set = [];
+                foreach my $details_arr (
+                    @{ $instancestatus_elem->{systemStatus}{details}{item} } )
+                {
+                    my $details = Net::Amazon::EC2::Details->new(
+                        status => $details_arr->{status},
+                        name   => $details_arr->{name},
+                    );
+                    push @$details_set, $details;
+                }
+                $instancestatus_sstatus = Net::Amazon::EC2::SystemStatus->new(
+                    status  => $instancestatus_elem->{systemStatus}{status},
+                    details => $details_set,
+                );
+            }
+
+            my $instance_status = Net::Amazon::EC2::InstanceStatuses->new(
+                availability_zone => $instancestatus_elem->{availabilityZone},
+                events            => $group_sets,
+                instance_id       => $instancestatus_elem->{instanceId},
+                instance_state    => $instancestatus_state,
+                instance_status   => $instancestatus_istatus,
+                system_status     => $instancestatus_sstatus,
+
+            );
+
+            push @$instancestatuses, $instance_status;
+        }
+
+    }
+
+    return $instancestatuses;
 }
 
 =head2 describe_instance_attribute(%params)
@@ -1967,7 +2309,6 @@ sub describe_instance_attribute {
 				push @$block_mappings, $block_device_mapping;
 			}
 
-			warn Dumper($block_mappings);
 			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
 				instance_id				=> $xml->{instanceId},
 				block_device_mapping	=> $block_mappings,
@@ -2160,7 +2501,9 @@ ID of the Reserved Instances to describe.
 
 =item InstanceType (optional)
 
-The instance type on which the Reserved Instance can be used.
+The instance type. The default is m1.small. Amazon frequently updates their instance types.
+
+See http://aws.amazon.com/ec2/instance-types
 
 =item AvailabilityZone (optional)
 
@@ -2224,6 +2567,10 @@ This method describes the security groups available to this account. It takes th
 
 The name of the security group(s) to be described. Can be either a scalar or an array ref.
 
+=item GroupId (optional)
+
+The id of the security group(s) to be described. Can be either a scalar or an array ref.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::SecurityGroup objects
@@ -2234,18 +2581,27 @@ sub describe_security_groups {
 	my $self = shift;
 	my %args = validate( @_, {
 		GroupName => { type => SCALAR | ARRAYREF, optional => 1 },
+		GroupId => { type => SCALAR | ARRAYREF, optional => 1 },
 	});
 
-	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	# If we have a array ref of GroupNames lets split them out into their GroupName.n format
 	if (ref ($args{GroupName}) eq 'ARRAY') {
 		my $groups = delete $args{GroupName};
 		my $count = 1;
 		foreach my $group (@{$groups}) {
-			$args{"GroupName." . $count} = $group;
-			$count++;
+			$args{"GroupName." . $count++} = $group;
 		}
 	}
 	
+	# If we have a array ref of GroupIds lets split them out into their GroupId.n format
+	if (ref ($args{GroupId}) eq 'ARRAY') {
+		my $groups = delete $args{GroupId};
+		my $count = 1;
+		foreach my $group (@{$groups}) {
+			$args{"GroupId." . $count++} = $group;
+		}
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeSecurityGroups', %args);
 	
 	if ( grep { defined && length } $xml->{Errors} ) {
@@ -2256,8 +2612,11 @@ sub describe_security_groups {
 		foreach my $sec_grp (@{$xml->{securityGroupInfo}{item}}) {
 			my $owner_id = $sec_grp->{ownerId};
 			my $group_name = $sec_grp->{groupName};
+			my $group_id = $sec_grp->{groupId};
 			my $group_description = $sec_grp->{groupDescription};
+			my $vpc_id = $sec_grp->{vpcId};
 			my $ip_permissions;
+			my $ip_permissions_egress;
 
 			foreach my $ip_perm (@{$sec_grp->{ipPermissions}{item}}) {
 				my $ip_protocol = $ip_perm->{ipProtocol};
@@ -2309,11 +2668,64 @@ sub describe_security_groups {
 				push @$ip_permissions, $ip_permission;
 			}
 			
+			foreach my $ip_perm (@{$sec_grp->{ipPermissionsEgress}{item}}) {
+				my $ip_protocol = $ip_perm->{ipProtocol};
+				my $from_port	= $ip_perm->{fromPort};
+				my $to_port		= $ip_perm->{toPort};
+				my $icmp_port	= $ip_perm->{icmpPort};
+				my $groups;
+				my $ip_ranges;
+				
+				if (grep { defined && length } $ip_perm->{groups}{item}) {
+					foreach my $grp (@{$ip_perm->{groups}{item}}) {
+						my $group = Net::Amazon::EC2::UserIdGroupPair->new(
+							user_id		=> $grp->{userId},
+							group_name	=> $grp->{groupName},
+						);
+						
+						push @$groups, $group;
+					}
+				}
+				
+				if (grep { defined && length } $ip_perm->{ipRanges}{item}) {
+					foreach my $rng (@{$ip_perm->{ipRanges}{item}}) {
+						my $ip_range = Net::Amazon::EC2::IpRange->new(
+							cidr_ip => $rng->{cidrIp},
+						);
+						
+						push @$ip_ranges, $ip_range;
+					}
+				}
+
+								
+				my $ip_permission = Net::Amazon::EC2::IpPermission->new(
+					ip_protocol			=> $ip_protocol,
+					group_name			=> $group_name,
+					group_description	=> $group_description,
+					from_port			=> $from_port,
+					to_port				=> $to_port,
+					icmp_port			=> $icmp_port,
+				);
+				
+				if ($ip_ranges) {
+					$ip_permission->ip_ranges($ip_ranges);
+				}
+
+				if ($groups) {
+					$ip_permission->groups($groups);
+				}
+				
+				push @$ip_permissions_egress, $ip_permission;
+			}
+
 			my $security_group = Net::Amazon::EC2::SecurityGroup->new(
 				owner_id			=> $owner_id,
 				group_name			=> $group_name,
+				group_id			=> $group_id,
+				vpc_id 	 			=> $vpc_id,
 				group_description	=> $group_description,
 				ip_permissions		=> $ip_permissions,
+				ip_permissions_egress	=> $ip_permissions_egress,
 			);
 			
 			push @$security_groups, $security_group;
@@ -2411,6 +2823,13 @@ The owner of the snapshot.
 
 A user who can create volumes from the snapshot.
 
+=item Filter (optional)
+
+The filters for only the matching snapshots to be 'described'.  A
+filter tuple is an arrayref constsing one key and one or more values.
+The option takes one filter tuple, or an arrayref of multiple filter
+tuples.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::Snapshot objects.
@@ -2423,7 +2842,10 @@ sub describe_snapshots {
 		SnapshotId		=> { type => ARRAYREF | SCALAR, optional => 1 },
 		Owner			=> { type => SCALAR, optional => 1 },
 		RestorableBy	=> { type => SCALAR, optional => 1 },
+		Filter		=> { type => ARRAYREF, optional => 1 },
 	});
+
+	$self->_build_filters(\%args);
 
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
 	if (ref ($args{SnapshotId}) eq 'ARRAY') {
@@ -2532,6 +2954,18 @@ sub describe_volumes {
  				push @$attachments, $attachment;
 			}
 			
+			my $tags;
+			foreach my $tag_arr (@{$volume_set->{tagSet}{item}}) {
+				if ( ref $tag_arr->{value} eq "HASH" ) {
+					$tag_arr->{value} = "";
+				}
+				my $tag = Net::Amazon::EC2::TagSet->new(
+					key => $tag_arr->{key},
+					value => $tag_arr->{value},
+				);
+				push @$tags, $tag;
+			}
+
 			my $volume = Net::Amazon::EC2::Volume->new(
 				volume_id		=> $volume_set->{volumeId},
 				status			=> $volume_set->{status},
@@ -2539,6 +2973,10 @@ sub describe_volumes {
 				create_time		=> $volume_set->{createTime},
 				snapshot_id		=> $volume_set->{snapshotId},
 				size			=> $volume_set->{size},
+				volume_type		=> $volume_set->{volumeType},
+				iops			=> $volume_set->{iops},
+				encrypted		=> $volume_set->{encrypted},
+				tag_set                 => $tags,
 				attachments		=> $attachments,
 			);
 			
@@ -2572,8 +3010,8 @@ Returns an array ref of Net::Amazon::EC2::DescribeTags objects
 sub describe_tags {
 	my $self = shift;
 	my %args = validate( @_, {
-		'Filter.Name'				=> { type => ARRAYREF | SCALAR },
-		'Filter.Value'				=> { type => ARRAYREF | SCALAR },
+		'Filter.Name'				=> { type => ARRAYREF | SCALAR, optional => 1 },
+		'Filter.Value'				=> { type => ARRAYREF | SCALAR, optional => 1 },
 	});
 
 	if (ref ($args{'Filter.Name'}) eq 'ARRAY') {
@@ -2726,7 +3164,9 @@ A scalar containing a instance id.
 
 =back
 
-Returns a Net::Amazon::EC2::ConsoleOutput object.
+Returns a Net::Amazon::EC2::ConsoleOutput object or C<undef> if there is no
+new output. (This can happen in cases where the console output has not changed
+since the last call.)
 
 =cut
 
@@ -2743,13 +3183,17 @@ sub get_console_output {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $console_output = Net::Amazon::EC2::ConsoleOutput->new(
-			instance_id	=> $xml->{instanceId},
-			timestamp	=> $xml->{timestamp},
-			output		=> decode_base64($xml->{output}),
-		);
-		
-		return $console_output;
+		if ( grep { defined && length } $xml->{output} ) {
+			my $console_output = Net::Amazon::EC2::ConsoleOutput->new(
+				instance_id	=> $xml->{instanceId},
+				timestamp	=> $xml->{timestamp},
+				output		=> decode_base64($xml->{output}),
+			);
+			return $console_output;
+		}
+		else {
+			return undef;
+		}
 	}
 }
 
@@ -2856,7 +3300,7 @@ sub modify_image_attribute {
 
 =head2 modify_instance_attribute(%params)
 
-Modify an attribute of an instance. Only one attribute can be specified per call.
+Modify an attribute of an instance. 
 
 =over
 
@@ -2892,6 +3336,21 @@ The attribute we want to modify. Valid values are:
 
 The value to set the attribute to.
 
+You may also pass a hashref with one or more keys 
+and values. This hashref will be flattened and 
+passed to AWS.
+
+For example:
+
+  $ec2->modify_instance_attribute(
+        'InstanceId' => $id,
+        'Attribute' => 'blockDeviceMapping',
+        'Value' => {
+            'BlockDeviceMapping.1.DeviceName' => '/dev/sdf1',
+            'BlockDeviceMapping.1.Ebs.DeleteOnTermination' => 'true',
+        }
+  );            
+
 =back
 
 Returns 1 if the modification succeeds.
@@ -2903,8 +3362,14 @@ sub modify_instance_attribute {
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR },
 		Attribute	=> { type => SCALAR },
-		Value		=> { type => SCALAR },
+		Value		=> { type => SCALAR | HASHREF },
 	});
+
+    if ( ref($args{'Value'}) eq "HASH" ) {
+        # remove the 'Value' key and flatten the hashref
+        my $href = delete $args{'Value'};
+        map { $args{$_} = $href->{$_} } keys %{$href};
+    }
 	
 	my $xml = $self->_sign(Action  => 'ModifyInstanceAttribute', %args);
 
@@ -3154,42 +3619,42 @@ This method registers an AMI on the EC2. It takes the following parameter:
 
 =over
 
-=item imageLocation (optional)
+=item ImageLocation (optional)
 
 The location of the AMI manifest on S3
 
-=item name (required)
+=item Name (required)
 
 The name of the AMI that was provided during image creation.
 
-=item description (optional)
+=item Description (optional)
 
 The description of the AMI.
 
-=item architecture (optional)
+=item Architecture (optional)
 
 The architecture of the image. Either i386 or x86_64
 
-=item kernelId (optional)
+=item KernelId (optional)
 
 The ID of the kernel to select. 
 
-=item ramdiskId (optional)
+=item RamdiskId (optional)
 
 The ID of the RAM disk to select. Some kernels require additional drivers at launch. 
 
-=item rootDeviceName (optional)
+=item RootDeviceName (optional)
 
 The root device name (e.g., /dev/sda1).
 
-=item blockDeviceMapping (optional)
+=item BlockDeviceMapping (optional)
 
 This needs to be a data structure like this:
 
-[
+ [
 	{
 		deviceName	=> "/dev/sdh", (optional)
-		virtualName	=> "ephermel0", (optional)
+		virtualName	=> "ephemerel0", (optional)
 		noDevice	=> "/dev/sdl", (optional),
 		ebs			=> {
 			snapshotId			=> "snap-0000", (optional)
@@ -3198,7 +3663,7 @@ This needs to be a data structure like this:
 		},
 	},
 	...
-]	
+ ]	
 
 =back
 
@@ -3430,7 +3895,7 @@ This method revoke permissions to a security group.  It takes the following para
 
 The name of the group to revoke security rules from.
 
-=item SourceSecurityGroupName (requred when revoking a user and group together)
+=item SourceSecurityGroupName (required when revoking a user and group together)
 
 Name of the group to revoke access from.
 
@@ -3500,7 +3965,9 @@ sub revoke_security_group_ingress {
 
 =head2 run_instances(%params)
 
-This method will start instance(s) of AMIs on EC2. The parameters indicate which AMI to instantiate and how many / what properties they have:
+This method will start instance(s) of AMIs on EC2. The parameters
+indicate which AMI to instantiate and how many / what properties they
+have:
 
 =over
 
@@ -3524,6 +3991,10 @@ The keypair name to associate this instance with.  If omitted, will use your def
 
 An scalar or array ref. Will associate this instance with the group names passed in.  If omitted, will be associated with the default security group.
 
+=item SecurityGroupId (optional)
+
+An scalar or array ref. Will associate this instance with the group ids passed in.  If omitted, will be associated with the default security group.
+
 =item AdditionalInfo (optional)
 
 Specifies additional information to make available to the instance(s).
@@ -3534,13 +4005,21 @@ Optional data to pass into the instance being started.  Needs to be base64 encod
 
 =item InstanceType (optional)
 
-Specifies the type of instance to start.  The options are:
+Specifies the type of instance to start.
+
+See http://aws.amazon.com/ec2/instance-types
+
+The options are:
 
 =over
 
 =item m1.small (default)
 
-1 EC2 Compute Unit (1 virtual core with 1 EC2 Compute Unit). 32-bit, 1.7GB RAM, 160GB disk
+1 EC2 Compute Unit (1 virtual core with 1 EC2 Compute Unit). 32-bit or 64-bit, 1.7GB RAM, 160GB disk
+
+=item m1.medium Medium Instance
+
+2 EC2 Compute Units (1 virtual core with 2 EC2 Compute Unit), 32-bit or 64-bit, 3.75GB RAM, 410GB disk
 
 =item m1.large: Standard Large Instance
 
@@ -3550,23 +4029,43 @@ Specifies the type of instance to start.  The options are:
 
 8 EC2 Compute Units (4 virtual cores with 2 EC2 Compute Units each). 64-bit, 15GB RAM, 1690GB disk
 
+=item t1.micro Micro Instance
+
+Up to 2 EC2 Compute Units (for short periodic bursts), 32-bit or 64-bit, 613MB RAM, EBS storage only
+
 =item c1.medium: High-CPU Medium Instance
 
-5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit, 1.7GB RAM, 350GB disk
+5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit or 64-bit, 1.7GB RAM, 350GB disk
 
 =item c1.xlarge: High-CPU Extra Large Instance
 
 20 EC2 Compute Units (8 virtual cores with 2.5 EC2 Compute Units each). 64-bit, 7GB RAM, 1690GB disk
 
-=item m2.2xlarge
+=item m2.2xlarge High-Memory Double Extra Large Instance
 
 13 EC2 Compute Units (4 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 34.2GB RAM, 850GB disk
 
-=item m2.4xlarge
+=item m2.4xlarge High-Memory Quadruple Extra Large Instance
 
 26 EC2 Compute Units (8 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 68.4GB RAM, 1690GB disk
 
-=back 
+=item cc1.4xlarge Cluster Compute Quadruple Extra Large Instance
+
+33.5 EC2 Compute Units (2 x Intel Xeon X5570, quad-core "Nehalem" architecture), 64-bit, 23GB RAM, 1690GB disk, 10Gbit Ethernet
+
+=item cc1.8xlarge Cluster Compute Eight Extra Large Instance
+
+88 EC2 Compute Units (2 x Intel Xeon E5-2670, eight-core "Sandy Bridge" architecture), 64-bit, 60.5GB RAM, 3370GB disk, 10Gbit Ethernet
+
+=item cg1.4xlarge Cluster GPU Quadruple Extra Large Instance
+
+33.5 EC2 Compute Units (2 x Intel Xeon X5570, quad-core "Nehalem" architecture), 64-bit, 22GB RAM 1690GB disk, 10Gbit Ethernet, 2 x NVIDIA Tesla "Fermi" M2050 GPUs
+
+=item hi1.4xlarge High I/O Quadruple Extra Large Instance
+
+35 EC2 Compute Units (16 virtual cores), 60.5GB RAM, 64-bit, 2 x 1024GB SSD disk, 10Gbit Ethernet
+
+=back
 
 =item Placement.AvailabilityZone (optional)
 
@@ -3577,7 +4076,7 @@ The availability zone you want to run the instance in
 The id of the kernel you want to launch the instance with
 
 =item RamdiskId (optional)
-  
+
 The id of the ramdisk you want to launch the instance with
 
 =item BlockDeviceMapping.VirtualName (optional)
@@ -3604,6 +4103,27 @@ Enables monitoring for this instance.
 
 Specifies the subnet ID within which to launch the instance(s) for Amazon Virtual Private Cloud.
 
+=item ClientToken (optional)
+
+Specifies the idempotent instance id.
+
+=item EbsOptimized (optional)
+
+Whether the instance is optimized for EBS I/O.
+
+=item PrivateIpAddress (optional)
+
+Specifies the private IP address to use when launching an Amazon VPC instance.
+
+=item IamInstanceProfile.Name (optional)
+
+Specifies the IAM profile to associate with the launched instance(s).  This is the name of the role.
+
+=item IamInstanceProfile.Arn (optional)
+
+Specifies the IAM profile to associate with the launched instance(s).  This is the ARN of the profile.
+
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -3618,6 +4138,8 @@ sub run_instances {
 		MaxCount										=> { type => SCALAR },
 		KeyName											=> { type => SCALAR, optional => 1 },
 		SecurityGroup									=> { type => SCALAR | ARRAYREF, optional => 1 },
+		SecurityGroupId									=> { type => SCALAR | ARRAYREF, optional => 1 },
+		AddressingType									=> { type => SCALAR, optional => 1 },
 		AdditionalInfo									=> { type => SCALAR, optional => 1 },
 		UserData										=> { type => SCALAR, optional => 1 },
 		InstanceType									=> { type => SCALAR, optional => 1 },
@@ -3628,6 +4150,7 @@ sub run_instances {
 		'BlockDeviceMapping.DeviceName'					=> { type => SCALAR | ARRAYREF, optional => 1 },
 		'BlockDeviceMapping.Ebs.SnapshotId'				=> { type => SCALAR | ARRAYREF, optional => 1 },
 		'BlockDeviceMapping.Ebs.VolumeSize'				=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.Ebs.VolumeType'				=> { type => SCALAR | ARRAYREF, optional => 1 },
 		'BlockDeviceMapping.Ebs.DeleteOnTermination'	=> { type => SCALAR | ARRAYREF, optional => 1 },
 		Encoding										=> { type => SCALAR, optional => 1 },
 		Version											=> { type => SCALAR, optional => 1 },
@@ -3635,6 +4158,12 @@ sub run_instances {
 		SubnetId										=> { type => SCALAR, optional => 1 },
 		DisableApiTermination							=> { type => SCALAR, optional => 1 },
 		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
+		ClientToken										=> { type => SCALAR, optional => 1 },
+		EbsOptimized									=> { type => SCALAR, optional => 1 },
+		PrivateIpAddress								=> { type => SCALAR, optional => 1 },
+		'IamInstanceProfile.Name'								=> { type => SCALAR, optional => 1 },
+		'IamInstanceProfile.Arn'								=> { type => SCALAR, optional => 1 },
+
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -3647,12 +4176,22 @@ sub run_instances {
 		}
 	}
 
+	# If we have a array ref of instances lets split them out into their SecurityGroupId.n format
+	if (ref ($args{SecurityGroupId}) eq 'ARRAY') {
+		my $security_groups	= delete $args{SecurityGroupId};
+		my $count			= 1;
+		foreach my $security_group (@{$security_groups}) {
+			$args{"SecurityGroupId." . $count} = $security_group;
+			$count++;
+		}
+	}
+
 	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.VirtualName format
 	if (ref ($args{'BlockDeviceMapping.VirtualName'}) eq 'ARRAY') {
 		my $virtual_names	= delete $args{'BlockDeviceMapping.VirtualName'};
 		my $count			= 1;
 		foreach my $virtual_name (@{$virtual_names}) {
-			$args{"BlockDeviceMapping." . $count . ".VirtualName"} = $virtual_name;
+			$args{"BlockDeviceMapping." . $count . ".VirtualName"} = $virtual_name if defined($virtual_name);
 			$count++;
 		}
 	}
@@ -3662,7 +4201,7 @@ sub run_instances {
 		my $device_names	= delete $args{'BlockDeviceMapping.DeviceName'};
 		my $count			= 1;
 		foreach my $device_name (@{$device_names}) {
-			$args{"BlockDeviceMapping." . $count . ".DeviceName"} = $device_name;
+			$args{"BlockDeviceMapping." . $count . ".DeviceName"} = $device_name if defined($device_name);
 			$count++;
 		}
 	}
@@ -3672,7 +4211,7 @@ sub run_instances {
 		my $snapshot_ids	= delete $args{'BlockDeviceMapping.Ebs.SnapshotId'};
 		my $count			= 1;
 		foreach my $snapshot_id (@{$snapshot_ids}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.SnapshotId"} = $snapshot_id;
+			$args{"BlockDeviceMapping." . $count . ".Ebs.SnapshotId"} = $snapshot_id if defined($snapshot_id);
 			$count++;
 		}
 	}
@@ -3682,7 +4221,17 @@ sub run_instances {
 		my $volume_sizes	= delete $args{'BlockDeviceMapping.Ebs.VolumeSize'};
 		my $count			= 1;
 		foreach my $volume_size (@{$volume_sizes}) {
-			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeSize"} = $volume_size;
+			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeSize"} = $volume_size if defined($volume_size);
+			$count++;
+		}
+	}
+
+	# If we have a array ref of block device EBS VolumeTypes lets split them out into their BlockDeviceMapping.n.Ebs.VolumeType format
+	if (ref ($args{'BlockDeviceMapping.Ebs.VolumeType'}) eq 'ARRAY') {
+		my $volume_types	= delete $args{'BlockDeviceMapping.Ebs.VolumeType'};
+		my $count			= 1;
+		foreach my $volume_type (@{$volume_types}) {
+			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeType"} = $volume_type if defined($volume_type);
 			$count++;
 		}
 	}
@@ -3703,7 +4252,7 @@ sub run_instances {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $group_sets;
+		my $group_sets=[];
 		foreach my $group_arr (@{$xml->{groupSet}{item}}) {
 			my $group = Net::Amazon::EC2::GroupSet->new(
 				group_id => $group_arr->{groupId},
@@ -4082,9 +4631,11 @@ machine instance usage charges (since there are 2 instances started) which as of
 Important note about the windows-only methods.  These have not been well tested as I do not run windows-based instances, so exercise
 caution in using these.
 
-=head1 TODO
+=head1 BUGS
 
-Need to add in support for Spot Instances.
+Please report any bugs or feature requests to C<bug-net-amazon-ec2 at rt.cpan.org>, or through
+the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Net-Amazon-EC2>.  I will 
+be notified, and then you'll automatically be notified of progress on your bug as I make changes.
 
 =head1 AUTHOR
 
@@ -4092,13 +4643,23 @@ Jeff Kim <cpan@chosec.com>
 
 =head1 CONTRIBUTORS
 
-John McCullough
+John McCullough and others as listed in the Changelog
+
+=head1 MAINTAINER
+
+The current maintainer is Mark Allen C<< <mallen@cpan.org> >>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. 
+
+Copyright (c) 2012 Mark Allen.
+
+This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
 Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/latest/APIReference/>
+
+=cut

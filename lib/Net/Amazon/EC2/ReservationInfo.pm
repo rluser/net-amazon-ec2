@@ -21,7 +21,7 @@ Unique ID attached to the reservation.
 
 AWS Account id of the person making the reservation.
 
-=item group_set (required)
+=item group_set
 
 An array ref of Net::Amazon::EC2::GroupSet objects.
 
@@ -52,6 +52,8 @@ has 'instances_set'		=> (
 has 'requester_id'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
+
+=back
 
 =head1 AUTHOR
 
