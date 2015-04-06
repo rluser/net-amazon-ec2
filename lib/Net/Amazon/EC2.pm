@@ -604,7 +604,8 @@ Returns 1 if rule is added successfully.
 sub authorize_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
-		GroupName					=> { type => SCALAR },
+		GroupName					=> { type => SCALAR, optional => 1 },
+		GroupId						=> { type => SCALAR, optional => 1 },
 		SourceSecurityGroupName 	=> { 
 			type => SCALAR,
 			depends => ['SourceSecurityGroupOwnerId'],
@@ -4174,7 +4175,8 @@ Returns 1 if rule is revoked successfully.
 sub revoke_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
-								GroupName					=> { type => SCALAR },
+								GroupName					=> { type => SCALAR, optional => 1 },
+								GroupId						=> { type => SCALAR, optional => 1 },
 								SourceSecurityGroupName 	=> { 
 																	type => SCALAR,
 																	depends => ['SourceSecurityGroupOwnerId'],
