@@ -9,7 +9,7 @@ use LWP::UserAgent;
 use LWP::Protocol::https;
 use Digest::SHA qw(hmac_sha256 hmac_sha256_hex sha256_hex);
 use URI;
-use MIME::Base64 qw(decode_base64);
+use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime);
 use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
 use Data::Dumper qw(Dumper);
@@ -329,6 +329,13 @@ sub _sign_v2 {
 	$self->_handle_response($res);
 }
 
+sub _hashit {
+	my $self                               = shift;
+	my ($secret_access_key, $query_string) = @_;
+	
+	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+}
+
 sub _sign_v4 {
 	my $self             = shift;
 	my %args             = @_;
@@ -351,6 +358,8 @@ sub _sign_v4 {
 	}
 	my $content .= join "&", @content_elements;
 
+	$self->_debug("CONTENT: $content");
+
 	# Step 1: create canonical request string
 	my $uri = URI->new($self->base_url);
 	my $canonical_headers = "content-type:" . $content_type . "\n" .
@@ -363,6 +372,7 @@ sub _sign_v4 {
 	$canonical_request .= $canonical_headers . "\n";	# headers
 	$canonical_request .= $signed_headers . "\n";		# signed headers
 	$canonical_request .= sha256_hex($content);		# payload
+	$self->_debug("CANONICAL REQUEST: $canonical_request");
 
 	# Step 2: create string to sign
 	my $sign_this = $algorithm . "\n";
@@ -386,17 +396,18 @@ sub _sign_v4 {
 				', SignedHeaders=' . $signed_headers .
 				', Signature=' . $signature;
 
-	my $ur = $uri->as_string();
-	$self->_debug("GENERATED QUERY URL: $ur");
+
+	my $req = HTTP::Request->new('POST', $uri,
+			[ "Authorization" => $auth_header,
+			"Content-Type"  => $content_type,
+			"X-Amz-Date"    => $amz_date ] , 
+			$content
+	);
+	$self->_debug("HTTP REQUEST: " . $req->as_string() . "\n");
+
 	my $ua = LWP::UserAgent->new();
 	$ua->env_proxy;
-
-	my $res = $ua->post($ur,
-			"Authorization" => $auth_header,
-			"Content-Type" => $content_type,
-			"X-Amz-Date" => $amz_date,
-			Content => $content);
-
+	my $res = $ua->request($req);
 	$self->_handle_response($res);
 }
 
