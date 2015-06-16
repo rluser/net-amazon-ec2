@@ -7,13 +7,14 @@ use vars qw($VERSION);
 use XML::Simple;
 use LWP::UserAgent;
 use LWP::Protocol::https;
-use Digest::SHA qw(hmac_sha256);
+use Digest::SHA qw(hmac_sha256 hmac_sha256_hex sha256_hex);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime);
 use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
 use Data::Dumper qw(Dumper);
 use URI::Escape qw(uri_escape_utf8);
+use Encode qw(encode_utf8);
 use Carp;
 
 use Net::Amazon::EC2::DescribeImagesResponse;
@@ -168,161 +169,261 @@ If you want/need the old behavior, set this attribute to a true value.
 
 =cut
 
-has 'AWSAccessKeyId'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 1,
-			     lazy => 1,
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'AccessKeyId'};
-				 } else {
-				     return undef;
-				 }
-			     }
+has 'AWSAccessKeyId' => (
+	is => 'ro',
+	isa => 'Str',
+	required => 1,
+	lazy => 1,
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'AccessKeyId'};
+		} else {
+			return undef;
+		}
+	}
 );
-has 'SecretAccessKey'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 1,
-			     lazy => 1,
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'SecretAccessKey'};
-				 } else {
-				     return undef;
-				 }
-			     }
+has 'SecretAccessKey' => ( 
+	is => 'ro',
+	isa => 'Str',
+	required => 1,
+	lazy => 1,
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'SecretAccessKey'};
+		} else {
+			return undef;
+		}
+	}
 );
-has 'SecurityToken'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 0,
-			     lazy => 1,
-			     predicate => 'has_SecurityToken',
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'Token'};
-				 } else {
-				     return undef;
-				 }
-			     }
+has 'SecurityToken' => ( 
+	is => 'ro',
+	isa => 'Str',
+	required => 0,
+	lazy => 1,
+	predicate => 'has_SecurityToken',
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'Token'};
+		} else {
+			return undef;
+		}
+	}
 );
-has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 2 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
-has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
-has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
+has 'debug'             => ( is => 'ro', isa => 'Str', required => 0, default => 0 );
+has 'signature_version' => ( is => 'ro', isa => 'Int', required => 1, default => 2 );
+has 'version'           => ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
+has 'region'            => ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
+has 'ssl'               => ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
 has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
-has 'base_url'			=> ( 
-	is			=> 'ro', 
-	isa			=> 'Str', 
-	required	=> 1,
-	lazy		=> 1,
-	default		=> sub {
+has 'base_url'          => (
+	is       => 'ro',
+	isa      => 'Str',
+	required => 1,
+	lazy     => 1,
+	default  => sub {
 		return 'http' . ($_[0]->ssl ? 's' : '') . '://ec2.' . $_[0]->region . '.amazonaws.com';
 	}
 );
-has 'temp_creds'       => ( is => 'ro',
-			     lazy => 1,
-			     default => sub {
-				 my $ret;
-				 $ret = $_[0]->_fetch_iam_security_credentials();
-			     },
-			     predicate => 'has_temp_creds'
+has 'temp_creds' => (
+	is      => 'ro',
+	lazy    => 1,
+	default => sub {
+		my $ret;
+		$ret = $_[0]->_fetch_iam_security_credentials();
+	},
+	predicate => 'has_temp_creds'
 );
 
-
 sub timestamp {
-    return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
+	return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
 }
 
 sub _fetch_iam_security_credentials {
-    my $self = shift;
-    my $retval = {};
+	my $self = shift;
+	my $retval = {};
 
-    my $ua = LWP::UserAgent->new();
-    # Fail quickly if this is not running on an EC2 instance
-    $ua->timeout(2);
+	my $ua = LWP::UserAgent->new();
+	# Fail quickly if this is not running on an EC2 instance
+	$ua->timeout(2);
 
-    my $url = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/';
-    
-    $self->_debug("Attempting to fetch instance credentials");
+	my $url = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/';
+	$self->_debug("Attempting to fetch instance credentials");
 
-    my $res = $ua->get($url);
-    if ($res->code == 200) {
-	# Assumes the first profile is the only profile
-	my $profile = (split /\n/, $res->content())[0];
-
-	$res = $ua->get($url . $profile);
-
+	my $res = $ua->get($url);
 	if ($res->code == 200) {
-	    $retval->{'Profile'} = $profile;
-	    foreach (split /\n/, $res->content()) {
-		return undef if /Code/ && !/Success/;
-		if (m/.*"([^"]+)"\s+:\s+"([^"]+)",/) {
-		    $retval->{$1} = $2;
-		}
-	    }
+		# Assumes the first profile is the only profile
+		my $profile = (split /\n/, $res->content())[0];
 
-	    return $retval if (keys %{$retval});
+		$res = $ua->get($url . $profile);
+
+		if ($res->code == 200) {
+			$retval->{'Profile'} = $profile;
+			foreach (split /\n/, $res->content()) {
+				return undef if /Code/ && !/Success/;
+				if (m/.*"([^"]+)"\s+:\s+"([^"]+)",/) {
+					$retval->{$1} = $2;
+				}
+			}
+			return $retval if (keys %{$retval});
+		}
 	}
-	 
-    }
-   
-    return undef;
+	return undef;
 }
 
 sub _sign {
-	my $self						= shift;
-	my %args						= @_;
-	my $action						= delete $args{Action};
-	my %sign_hash					= %args;
-	my $timestamp					= $self->timestamp;
+	my $self = shift;
 
-	$sign_hash{AWSAccessKeyId}		= $self->AWSAccessKeyId;
-	$sign_hash{Action}				= $action;
-	$sign_hash{Timestamp}			= $timestamp;
-	$sign_hash{Version}				= $self->version;
-	$sign_hash{SignatureVersion}	= $self->signature_version;
-    $sign_hash{SignatureMethod}     = "HmacSHA256";
-	if ($self->has_temp_creds || $self->has_SecurityToken) {
-	    $sign_hash{SecurityToken} = $self->SecurityToken;
+	if ( $self->signature_version == 2 ) {
+		$self->_sign_v2(@_);
 	}
+	elsif ( $self->signature_version == 4 ) {
+		$self->_sign_v4(@_);
+	}
+	else {
+		die "I don't know what signature version " . 
+			$self->signature_version . "means.\n";
+	}
+}
 
+sub _sign_v2 {
+	my $self      = shift;
+	my %args      = @_;
+	my $action    = delete $args{Action};
+	my %sign_hash = %args;
+	my $timestamp = $self->timestamp;
+
+	$sign_hash{AWSAccessKeyId}   = $self->AWSAccessKeyId;
+	$sign_hash{Action}           = $action;
+	$sign_hash{Timestamp}        = $timestamp;
+	$sign_hash{Version}          = $self->version;
+	$sign_hash{SignatureVersion} = $self->signature_version;
+	$sign_hash{SignatureMethod}  = "HmacSHA256";
+	if ($self->has_temp_creds || $self->has_SecurityToken) {
+		$sign_hash{SecurityToken} = $self->SecurityToken;
+	}
 
 	my $sign_this = "POST\n";
 	my $uri = URI->new($self->base_url);
 
-    $sign_this .= lc($uri->host) . "\n";
-    $sign_this .= "/\n";
+	$sign_this .= lc($uri->host) . "\n";
+	$sign_this .= "/\n";
 
-    my @signing_elements;
+	my @signing_elements;
 
 	foreach my $key (sort keys %sign_hash) {
 		push @signing_elements, uri_escape_utf8($key)."=".uri_escape_utf8($sign_hash{$key});
 	}
 
-    $sign_this .= join "&", @signing_elements;
+	$sign_this .= join "&", @signing_elements;
 
 	$self->_debug("QUERY TO SIGN: $sign_this");
 	my $encoded = $self->_hashit($self->SecretAccessKey, $sign_this);
 
-    my $content = join "&", @signing_elements, 'Signature=' . uri_escape_utf8($encoded);
+	my $content = join "&", @signing_elements, 'Signature=' . uri_escape_utf8($encoded);
 
-	my $ur	= $uri->as_string();
+	my $ur = $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
-	my $ua	= LWP::UserAgent->new();
-    $ua->env_proxy;
-	my $res	= $ua->post($ur, Content => $content);
+	my $ua = LWP::UserAgent->new();
+	$ua->env_proxy;
+	my $res = $ua->post($ur, Content => $content);
+	$self->_handle_response($res);
+}
+
+sub _hashit {
+	my $self                               = shift;
+	my ($secret_access_key, $query_string) = @_;
+	
+	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+}
+
+sub _sign_v4 {
+	my $self             = shift;
+	my %args             = @_;
+	my $algorithm        = 'AWS4-HMAC-SHA256';
+	my $service          = 'ec2';
+	my @now              = gmtime();
+	my $amz_date         = strftime("%Y%m%dT%H%M%SZ", @now);
+	my $datestamp        = strftime("%Y%m%d", @now);
+	my $credential_scope = $datestamp . "/" . $self->region . "/" . $service . "/aws4_request"; 
+	my $content_type     = "application/x-www-form-urlencoded";
+	my $signed_headers   = "content-type;host;x-amz-date";
+	# Assemble the content
+	$args{Version}       = $self->version;
+	if ($self->has_temp_creds) {
+		$args{'X-Amz-Security-Token'} = $self->temp_creds->{'Token'};
+	}
+	my @content_elements;
+	foreach my $key (sort keys %args) {
+		push @content_elements, uri_escape_utf8($key)."=".uri_escape_utf8($args{$key});
+	}
+	my $content .= join "&", @content_elements;
+
+	$self->_debug("CONTENT: $content");
+
+	# Step 1: create canonical request string
+	my $uri = URI->new($self->base_url);
+	my $canonical_headers = "content-type:" . $content_type . "\n" .
+				"host:" . lc($uri->host) . "\n" .
+				"x-amz-date:" . $amz_date . "\n";
+
+	my $canonical_request = "POST\n";			# method
+	$canonical_request .= "/\n";				# uri
+	$canonical_request .= "\n";				# query-string
+	$canonical_request .= $canonical_headers . "\n";	# headers
+	$canonical_request .= $signed_headers . "\n";		# signed headers
+	$canonical_request .= sha256_hex($content);		# payload
+	$self->_debug("CANONICAL REQUEST: $canonical_request");
+
+	# Step 2: create string to sign
+	my $sign_this = $algorithm . "\n";
+	$sign_this .= $amz_date . "\n";
+	$sign_this .= $credential_scope . "\n";
+	$sign_this .= sha256_hex($canonical_request);
+
+	$self->_debug("STRING TO SIGN: $sign_this");
+
+	# Step 3: calculate the signature
+	my $key_date = $self->_hmac(encode_utf8('AWS4' . $self->SecretAccessKey), $datestamp);
+	my $key_region = $self->_hmac($key_date, $self->region);
+	my $key_service = $self->_hmac($key_region, $service);
+	my $signing_key = $self->_hmac($key_service, 'aws4_request');
+
+	my $signature = $self->_hmac($signing_key, encode_utf8($sign_this), 1);
+
+	# send request
+	my $auth_header = $algorithm .
+				' Credential=' . $self->AWSAccessKeyId . '/' . $credential_scope .
+				', SignedHeaders=' . $signed_headers .
+				', Signature=' . $signature;
+
+
+	my $req = HTTP::Request->new('POST', $uri,
+			[ "Authorization" => $auth_header,
+			"Content-Type"  => $content_type,
+			"X-Amz-Date"    => $amz_date ] , 
+			$content
+	);
+	$self->_debug("HTTP REQUEST: " . $req->as_string() . "\n");
+
+	my $ua = LWP::UserAgent->new();
+	$ua->env_proxy;
+	my $res = $ua->request($req);
+	$self->_handle_response($res);
+}
+
+sub _handle_response {
+	my ($self, $res) = @_;
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(
-        ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
-        KeyAttr => '',                      # Turn off folding for 'id', 'name', 'key' elements
-        SuppressEmpty => undef,             # Turn empty values into explicit undefs
-    );
+	ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
+	KeyAttr => '',                      # Turn off folding for 'id', 'name', 'key' elements
+	SuppressEmpty => undef,             # Turn empty values into explicit undefs
+	);
 	my $xml;
 	
 	# Check the result for connectivity problems, if so throw an error
- 	if ($res->code >= 500) {
- 		my $message = $res->status_line;
+	if ($res->code >= 500) {
+		my $message = $res->status_line;
 		$xml = <<EOXML;
 <xml>
 	<RequestID>N/A</RequestID>
@@ -335,7 +436,7 @@ sub _sign {
 </xml>
 EOXML
 
- 	}
+	}
 	else {
 		$xml = $res->content();
 	}
@@ -393,12 +494,11 @@ sub _debug {
 	}
 }
 
-# HMAC sign the query with the aws secret access key and base64 encodes the result.
-sub _hashit {
-	my $self								= shift;
-	my ($secret_access_key, $query_string)	= @_;
-	
-	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+sub _hmac {
+	my $self				= shift;
+	my ($key, $msg, $hex) 	= @_;
+	my $func = $hex ? \&hmac_sha256_hex : \&hmac_sha256;
+	return &$func(encode_utf8($msg), $key);
 }
 
 sub _build_filters {

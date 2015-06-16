@@ -9,7 +9,7 @@ BEGIN {
         plan skip_all => "Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run these _LIVE_ tests (NOTE: they will incur one instance hour of costs from EC2)";
     }
     else {
-        plan tests => 29;
+        plan tests => 31;
         use_ok( 'Net::Amazon::EC2' );
     }
 };
@@ -152,6 +152,21 @@ foreach my $instance (@{$running_instances}) {
     }
 }
 ok($seen_test_instance == 1, "Checking for newly run instance");
+
+my $volume = $ec2->create_volume(
+    Size             => 10,
+    AvailabilityZone => 'us-east-1a',
+    VolumeType       => 'io1',
+    Iops             => 300,
+    Encrypted        => 1
+);
+note explain $volume;
+
+isa_ok($volume, 'Net::Amazon::EC2::Volume');
+
+my $rc = $ec2->delete_volume( VolumeId => $volume->volume_id );
+note explain $rc;
+ok($rc, "successfully deleted volume");
 
 
 # create tags
