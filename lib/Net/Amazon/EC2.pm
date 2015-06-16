@@ -70,7 +70,7 @@ use Net::Amazon::EC2::InstanceStatuses;
 use Net::Amazon::EC2::SystemStatus;
 use Net::Amazon::EC2::NetworkInterfaceSet;
 
-$VERSION = '0.30';
+$VERSION = '0.30_1';
 
 =head1 NAME
 
@@ -79,7 +79,7 @@ environment.
 
 =head1 VERSION
 
-This is Net::Amazon::EC2 version 0.30
+This is Net::Amazon::EC2 version 0.30_1
 
 EC2 Query API version: '2014-06-15'
 
@@ -88,8 +88,9 @@ EC2 Query API version: '2014-06-15'
  use Net::Amazon::EC2;
 
  my $ec2 = Net::Amazon::EC2->new(
-	AWSAccessKeyId => 'PUBLIC_KEY_HERE', 
-	SecretAccessKey => 'SECRET_KEY_HERE'
+	AWSAccessKeyId    => 'PUBLIC_KEY_HERE', 
+	SecretAccessKey   => 'SECRET_KEY_HERE',
+	signature_version => 4,
  );
 
  # Start 1 new instance from AMI: ami-XXXXXXXX

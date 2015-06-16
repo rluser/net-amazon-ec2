@@ -1,3 +1,7 @@
+0.30_1 2015-06-16
+       Sean Rodman      Allow use of Security Group ID for ingress control
+       Mark Allen       Based on RT#99779, support v4 signatures. (GH#46)
+
 0.30   2015-03-21
        Mark Allen       Increase timeout for describe_instance_status() test
        Mark Allen       Make sure functions which are documented to take ARRAYREFs 
