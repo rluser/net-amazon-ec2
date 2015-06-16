@@ -339,7 +339,7 @@ sub _hashit {
 sub _sign_v4 {
 	my $self             = shift;
 	my %args             = @_;
-	my $algorithm        = 'AWS-HMAC-SHA256';
+	my $algorithm        = 'AWS4-HMAC-SHA256';
 	my $service          = 'ec2';
 	my @now              = gmtime();
 	my $amz_date         = strftime("%Y%m%dT%H%M%SZ", @now);
