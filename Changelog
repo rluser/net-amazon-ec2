@@ -1,3 +1,6 @@
+0.31   2015-09-02    
+                        No changes from 0.30_1; marking an "official"
+                        release.
 0.30_1 2015-06-16
        Sean Rodman      Allow use of Security Group ID for ingress control
        Mark Allen       Based on RT#99779, support v4 signatures. (GH#46)
