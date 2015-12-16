@@ -36,6 +36,15 @@ An array ref of Net::Amazon::EC2::IpPermission objects for ingress.
 =item ip_permissions_egress (optional)
 
 An array ref of Net::Amazon::EC2::IpPermission objects for egress.
+
+=item vpc_id (optional)
+
+The VPC id of the corresponding security group
+
+=item tag_set (optional)
+
+The set of associated tags for the security group
+
 =cut
 
 has 'owner_id'          => ( is => 'ro', isa => 'Str', required => 1 );
@@ -54,6 +63,8 @@ has 'ip_permissions_egress' => (
     predicate   => 'has_ip_permissions_egress',
     default		=> sub { [ ] },
 );
+has 'vpc_id'           => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'tag_set'          => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 

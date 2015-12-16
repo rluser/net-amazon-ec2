@@ -7,3 +7,8 @@ Makefile*
 Net-Amazon-EC2*
 blib*
 pm_to_blib*
+.DS_Store
+*.diff
+*.orig
+*.bak
+*.patch

@@ -1,3 +1,31 @@
+0.31   2015-09-02    
+                        No changes from 0.30_1; marking an "official"
+                        release.
+0.30_1 2015-06-16
+       Sean Rodman      Allow use of Security Group ID for ingress control
+       Mark Allen       Based on RT#99779, support v4 signatures. (GH#46)
+
+0.30   2015-03-21
+       Mark Allen       Increase timeout for describe_instance_status() test
+       Mark Allen       Make sure functions which are documented to take ARRAYREFs 
+                        really do. Closes RT#99909
+       Steve Richards   Overhaul security group functionality
+       Anubhav Mishra   Update base to new-style URLs
+       Matt West        Properly page through very large describe_instances responses
+       Igor Tsiganok    Add network inferface support for describe_instances
+       Igor Tsiganok    Add release_vpc_address function. RT#102798
+  Jens-Uwe Schlüßler    Support tagsets in DescribeSnapshots and 
+                        DescribeImages RT#102787
+
+0.29   2014-08-04       
+       Mark Allen       Because I am an idiot and forgot to update the MANIFEST,
+                        5 pm files were left out of the previous release.
+						D'oh!
+
+0.28   2014-08-04
+       Matt West        Add describe_instance_status() call and data modules.
+       Mark Allen       Fix up describe_instance_status() test if it returns undef
+
 0.27   2014-07-31
        Stephen Day      Added egress rules to describe_security_groups
        Stephen Day      Add allocate_vpc_address plus minor documentation changes.

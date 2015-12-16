@@ -7,17 +7,19 @@ use vars qw($VERSION);
 use XML::Simple;
 use LWP::UserAgent;
 use LWP::Protocol::https;
-use Digest::SHA qw(hmac_sha256);
+use Digest::SHA qw(hmac_sha256 hmac_sha256_hex sha256_hex);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime);
 use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
 use Data::Dumper qw(Dumper);
 use URI::Escape qw(uri_escape_utf8);
+use Encode qw(encode_utf8);
 use Carp;
 
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
+use Net::Amazon::EC2::DescribeSubnetResponse;
 use Net::Amazon::EC2::GroupSet;
 use Net::Amazon::EC2::InstanceState;
 use Net::Amazon::EC2::IpPermission;
@@ -61,8 +63,14 @@ use Net::Amazon::EC2::EbsInstanceBlockDeviceMapping;
 use Net::Amazon::EC2::EbsBlockDevice;
 use Net::Amazon::EC2::TagSet;
 use Net::Amazon::EC2::DescribeTags;
+use Net::Amazon::EC2::Details;
+use Net::Amazon::EC2::Events;
+use Net::Amazon::EC2::InstanceStatus;
+use Net::Amazon::EC2::InstanceStatuses;
+use Net::Amazon::EC2::SystemStatus;
+use Net::Amazon::EC2::NetworkInterfaceSet;
 
-$VERSION = '0.27';
+$VERSION = '0.31';
 
 =head1 NAME
 
@@ -71,7 +79,7 @@ environment.
 
 =head1 VERSION
 
-This is Net::Amazon::EC2 version 0.27
+This is Net::Amazon::EC2 version 0.31
 
 EC2 Query API version: '2014-06-15'
 
@@ -80,8 +88,9 @@ EC2 Query API version: '2014-06-15'
  use Net::Amazon::EC2;
 
  my $ec2 = Net::Amazon::EC2->new(
-	AWSAccessKeyId => 'PUBLIC_KEY_HERE', 
-	SecretAccessKey => 'SECRET_KEY_HERE'
+	AWSAccessKeyId    => 'PUBLIC_KEY_HERE', 
+	SecretAccessKey   => 'SECRET_KEY_HERE',
+	signature_version => 4,
  );
 
  # Start 1 new instance from AMI: ami-XXXXXXXX
@@ -161,161 +170,261 @@ If you want/need the old behavior, set this attribute to a true value.
 
 =cut
 
-has 'AWSAccessKeyId'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 1,
-			     lazy => 1,
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'AccessKeyId'};
-				 } else {
-				     return undef;
-				 }
-			     }
-);
-has 'SecretAccessKey'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 1,
-			     lazy => 1,
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'SecretAccessKey'};
-				 } else {
-				     return undef;
-				 }
-			     }
-);
-has 'SecurityToken'	=> ( is => 'ro',
-			     isa => 'Str',
-			     required => 0,
-			     lazy => 1,
-			     predicate => 'has_SecurityToken',
-			     default => sub {
-				 if (defined($_[0]->temp_creds)) {
-				     return $_[0]->temp_creds->{'Token'};
-				 } else {
-				     return undef;
-				 }
-			     }
-);
-has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 2 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
-has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
-has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
-has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
-has 'base_url'			=> ( 
-	is			=> 'ro', 
-	isa			=> 'Str', 
-	required	=> 1,
-	lazy		=> 1,
-	default		=> sub {
-		return 'http' . ($_[0]->ssl ? 's' : '') . '://' . $_[0]->region . '.ec2.amazonaws.com';
+has 'AWSAccessKeyId' => (
+	is => 'ro',
+	isa => 'Str',
+	required => 1,
+	lazy => 1,
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'AccessKeyId'};
+		} else {
+			return undef;
+		}
 	}
 );
-has 'temp_creds'       => ( is => 'ro',
-			     lazy => 1,
-			     default => sub {
-				 my $ret;
-				 $ret = $_[0]->_fetch_iam_security_credentials();
-			     },
-			     predicate => 'has_temp_creds'
+has 'SecretAccessKey' => ( 
+	is => 'ro',
+	isa => 'Str',
+	required => 1,
+	lazy => 1,
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'SecretAccessKey'};
+		} else {
+			return undef;
+		}
+	}
+);
+has 'SecurityToken' => ( 
+	is => 'ro',
+	isa => 'Str',
+	required => 0,
+	lazy => 1,
+	predicate => 'has_SecurityToken',
+	default => sub {
+		if (defined($_[0]->temp_creds)) {
+			return $_[0]->temp_creds->{'Token'};
+		} else {
+			return undef;
+		}
+	}
+);
+has 'debug'             => ( is => 'ro', isa => 'Str', required => 0, default => 0 );
+has 'signature_version' => ( is => 'ro', isa => 'Int', required => 1, default => 2 );
+has 'version'           => ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
+has 'region'            => ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
+has 'ssl'               => ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
+has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
+has 'base_url'          => (
+	is       => 'ro',
+	isa      => 'Str',
+	required => 1,
+	lazy     => 1,
+	default  => sub {
+		return 'http' . ($_[0]->ssl ? 's' : '') . '://ec2.' . $_[0]->region . '.amazonaws.com';
+	}
+);
+has 'temp_creds' => (
+	is      => 'ro',
+	lazy    => 1,
+	default => sub {
+		my $ret;
+		$ret = $_[0]->_fetch_iam_security_credentials();
+	},
+	predicate => 'has_temp_creds'
 );
 
-
 sub timestamp {
-    return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
+	return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
 }
 
 sub _fetch_iam_security_credentials {
-    my $self = shift;
-    my $retval = {};
+	my $self = shift;
+	my $retval = {};
 
-    my $ua = LWP::UserAgent->new();
-    # Fail quickly if this is not running on an EC2 instance
-    $ua->timeout(2);
+	my $ua = LWP::UserAgent->new();
+	# Fail quickly if this is not running on an EC2 instance
+	$ua->timeout(2);
 
-    my $url = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/';
-    
-    $self->_debug("Attempting to fetch instance credentials");
+	my $url = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/';
+	$self->_debug("Attempting to fetch instance credentials");
 
-    my $res = $ua->get($url);
-    if ($res->code == 200) {
-	# Assumes the first profile is the only profile
-	my $profile = (split /\n/, $res->content())[0];
-
-	$res = $ua->get($url . $profile);
-
+	my $res = $ua->get($url);
 	if ($res->code == 200) {
-	    $retval->{'Profile'} = $profile;
-	    foreach (split /\n/, $res->content()) {
-		return undef if /Code/ && !/Success/;
-		if (m/.*"([^"]+)"\s+:\s+"([^"]+)",/) {
-		    $retval->{$1} = $2;
-		}
-	    }
+		# Assumes the first profile is the only profile
+		my $profile = (split /\n/, $res->content())[0];
 
-	    return $retval if (keys %{$retval});
+		$res = $ua->get($url . $profile);
+
+		if ($res->code == 200) {
+			$retval->{'Profile'} = $profile;
+			foreach (split /\n/, $res->content()) {
+				return undef if /Code/ && !/Success/;
+				if (m/.*"([^"]+)"\s+:\s+"([^"]+)",/) {
+					$retval->{$1} = $2;
+				}
+			}
+			return $retval if (keys %{$retval});
+		}
 	}
-	 
-    }
-   
-    return undef;
+	return undef;
 }
 
 sub _sign {
-	my $self						= shift;
-	my %args						= @_;
-	my $action						= delete $args{Action};
-	my %sign_hash					= %args;
-	my $timestamp					= $self->timestamp;
+	my $self = shift;
 
-	$sign_hash{AWSAccessKeyId}		= $self->AWSAccessKeyId;
-	$sign_hash{Action}				= $action;
-	$sign_hash{Timestamp}			= $timestamp;
-	$sign_hash{Version}				= $self->version;
-	$sign_hash{SignatureVersion}	= $self->signature_version;
-    $sign_hash{SignatureMethod}     = "HmacSHA256";
-	if ($self->has_temp_creds || $self->has_SecurityToken) {
-	    $sign_hash{SecurityToken} = $self->SecurityToken;
+	if ( $self->signature_version == 2 ) {
+		$self->_sign_v2(@_);
 	}
+	elsif ( $self->signature_version == 4 ) {
+		$self->_sign_v4(@_);
+	}
+	else {
+		die "I don't know what signature version " . 
+			$self->signature_version . "means.\n";
+	}
+}
 
+sub _sign_v2 {
+	my $self      = shift;
+	my %args      = @_;
+	my $action    = delete $args{Action};
+	my %sign_hash = %args;
+	my $timestamp = $self->timestamp;
+
+	$sign_hash{AWSAccessKeyId}   = $self->AWSAccessKeyId;
+	$sign_hash{Action}           = $action;
+	$sign_hash{Timestamp}        = $timestamp;
+	$sign_hash{Version}          = $self->version;
+	$sign_hash{SignatureVersion} = $self->signature_version;
+	$sign_hash{SignatureMethod}  = "HmacSHA256";
+	if ($self->has_temp_creds || $self->has_SecurityToken) {
+		$sign_hash{SecurityToken} = $self->SecurityToken;
+	}
 
 	my $sign_this = "POST\n";
 	my $uri = URI->new($self->base_url);
 
-    $sign_this .= lc($uri->host) . "\n";
-    $sign_this .= "/\n";
+	$sign_this .= lc($uri->host) . "\n";
+	$sign_this .= "/\n";
 
-    my @signing_elements;
+	my @signing_elements;
 
 	foreach my $key (sort keys %sign_hash) {
 		push @signing_elements, uri_escape_utf8($key)."=".uri_escape_utf8($sign_hash{$key});
 	}
 
-    $sign_this .= join "&", @signing_elements;
+	$sign_this .= join "&", @signing_elements;
 
 	$self->_debug("QUERY TO SIGN: $sign_this");
 	my $encoded = $self->_hashit($self->SecretAccessKey, $sign_this);
 
-    my $content = join "&", @signing_elements, 'Signature=' . uri_escape_utf8($encoded);
+	my $content = join "&", @signing_elements, 'Signature=' . uri_escape_utf8($encoded);
 
-	my $ur	= $uri->as_string();
+	my $ur = $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
-	my $ua	= LWP::UserAgent->new();
-    $ua->env_proxy;
-	my $res	= $ua->post($ur, Content => $content);
+	my $ua = LWP::UserAgent->new();
+	$ua->env_proxy;
+	my $res = $ua->post($ur, Content => $content);
+	$self->_handle_response($res);
+}
+
+sub _hashit {
+	my $self                               = shift;
+	my ($secret_access_key, $query_string) = @_;
+	
+	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+}
+
+sub _sign_v4 {
+	my $self             = shift;
+	my %args             = @_;
+	my $algorithm        = 'AWS4-HMAC-SHA256';
+	my $service          = 'ec2';
+	my @now              = gmtime();
+	my $amz_date         = strftime("%Y%m%dT%H%M%SZ", @now);
+	my $datestamp        = strftime("%Y%m%d", @now);
+	my $credential_scope = $datestamp . "/" . $self->region . "/" . $service . "/aws4_request"; 
+	my $content_type     = "application/x-www-form-urlencoded";
+	my $signed_headers   = "content-type;host;x-amz-date";
+	# Assemble the content
+	$args{Version}       = $self->version;
+	if ($self->has_temp_creds) {
+		$args{'X-Amz-Security-Token'} = $self->temp_creds->{'Token'};
+	}
+	my @content_elements;
+	foreach my $key (sort keys %args) {
+		push @content_elements, uri_escape_utf8($key)."=".uri_escape_utf8($args{$key});
+	}
+	my $content .= join "&", @content_elements;
+
+	$self->_debug("CONTENT: $content");
+
+	# Step 1: create canonical request string
+	my $uri = URI->new($self->base_url);
+	my $canonical_headers = "content-type:" . $content_type . "\n" .
+				"host:" . lc($uri->host) . "\n" .
+				"x-amz-date:" . $amz_date . "\n";
+
+	my $canonical_request = "POST\n";			# method
+	$canonical_request .= "/\n";				# uri
+	$canonical_request .= "\n";				# query-string
+	$canonical_request .= $canonical_headers . "\n";	# headers
+	$canonical_request .= $signed_headers . "\n";		# signed headers
+	$canonical_request .= sha256_hex($content);		# payload
+	$self->_debug("CANONICAL REQUEST: $canonical_request");
+
+	# Step 2: create string to sign
+	my $sign_this = $algorithm . "\n";
+	$sign_this .= $amz_date . "\n";
+	$sign_this .= $credential_scope . "\n";
+	$sign_this .= sha256_hex($canonical_request);
+
+	$self->_debug("STRING TO SIGN: $sign_this");
+
+	# Step 3: calculate the signature
+	my $key_date = $self->_hmac(encode_utf8('AWS4' . $self->SecretAccessKey), $datestamp);
+	my $key_region = $self->_hmac($key_date, $self->region);
+	my $key_service = $self->_hmac($key_region, $service);
+	my $signing_key = $self->_hmac($key_service, 'aws4_request');
+
+	my $signature = $self->_hmac($signing_key, encode_utf8($sign_this), 1);
+
+	# send request
+	my $auth_header = $algorithm .
+				' Credential=' . $self->AWSAccessKeyId . '/' . $credential_scope .
+				', SignedHeaders=' . $signed_headers .
+				', Signature=' . $signature;
+
+
+	my $req = HTTP::Request->new('POST', $uri,
+			[ "Authorization" => $auth_header,
+			"Content-Type"  => $content_type,
+			"X-Amz-Date"    => $amz_date ] , 
+			$content
+	);
+	$self->_debug("HTTP REQUEST: " . $req->as_string() . "\n");
+
+	my $ua = LWP::UserAgent->new();
+	$ua->env_proxy;
+	my $res = $ua->request($req);
+	$self->_handle_response($res);
+}
+
+sub _handle_response {
+	my ($self, $res) = @_;
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(
-	ForceArray => qr/(?:item|Errors)/i,	# Always want item elements unpacked to arrays
-	KeyAttr => '',				# Turn off folding for 'id', 'name', 'key' elements
-	SuppressEmpty => undef,			# Turn empty values into explicit undefs
-    );
+	ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
+	KeyAttr => '',                      # Turn off folding for 'id', 'name', 'key' elements
+	SuppressEmpty => undef,             # Turn empty values into explicit undefs
+	);
 	my $xml;
 	
 	# Check the result for connectivity problems, if so throw an error
- 	if ($res->code >= 500) {
- 		my $message = $res->status_line;
+	if ($res->code >= 500) {
+		my $message = $res->status_line;
 		$xml = <<EOXML;
 <xml>
 	<RequestID>N/A</RequestID>
@@ -328,7 +437,7 @@ sub _sign {
 </xml>
 EOXML
 
- 	}
+	}
 	else {
 		$xml = $res->content();
 	}
@@ -386,12 +495,11 @@ sub _debug {
 	}
 }
 
-# HMAC sign the query with the aws secret access key and base64 encodes the result.
-sub _hashit {
-	my $self								= shift;
-	my ($secret_access_key, $query_string)	= @_;
-	
-	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
+sub _hmac {
+	my $self				= shift;
+	my ($key, $msg, $hex) 	= @_;
+	my $func = $hex ? \&hmac_sha256_hex : \&hmac_sha256;
+	return &$func(encode_utf8($msg), $key);
 }
 
 sub _build_filters {
@@ -612,7 +720,8 @@ Returns 1 if rule is added successfully.
 sub authorize_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
-		GroupName					=> { type => SCALAR },
+		GroupName					=> { type => SCALAR, optional => 1 },
+		GroupId						=> { type => SCALAR, optional => 1 },
 		SourceSecurityGroupName 	=> { 
 			type => SCALAR,
 			depends => ['SourceSecurityGroupOwnerId'],
@@ -1464,7 +1573,7 @@ Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
 sub describe_addresses {
 	my $self = shift;
 	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR, optional => 1 },
+		PublicIp 		=> { type => SCALAR | ARRAYREF, optional => 1 },
 	});
 
 	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
@@ -1516,7 +1625,7 @@ Returns an array ref of Net::Amazon::EC2::AvailabilityZone objects
 sub describe_availability_zones {
 	my $self = shift;
 	my %args = validate( @_, {
-		ZoneName	=> { type => SCALAR, optional => 1 },
+		ZoneName	=> { type => SCALAR | ARRAYREF, optional => 1 },
 	});
 
 	# If we have a array ref of zone names lets split them out into their ZoneName.n format
@@ -1814,6 +1923,18 @@ sub describe_images {
 			}
 			$item->{description} = undef if ref ($item->{description});
 
+			my $tag_sets;
+			foreach my $tag_arr (@{$item->{tagSet}{item}}) {
+                if ( ref $tag_arr->{value} eq "HASH" ) {
+                    $tag_arr->{value} = "";
+                }
+				my $tag = Net::Amazon::EC2::TagSet->new(
+					key => $tag_arr->{key},
+					value => $tag_arr->{value},
+				);
+				push @$tag_sets, $tag;
+			}
+
 			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
 				image_id				=> $item->{imageId},
 				image_owner_id			=> $item->{imageOwnerId},
@@ -1832,6 +1953,7 @@ sub describe_images {
 				root_device_type		=> $item->{rootDeviceType},
 				root_device_name		=> $item->{rootDeviceName},
 				block_device_mapping	=> $block_device_mappings,
+				tag_set			        => $tag_sets,
 			);
 			
 			if (grep { defined && length } $item->{productCodes} ) {
@@ -1914,6 +2036,7 @@ sub describe_instances {
 				my $product_codes;
 				my $block_device_mappings;
 				my $state_reason;
+            my $network_interfaces_set;
 				
 				if (grep { defined && length } $instance_elem->{productCodes} ) {
 					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
@@ -1921,6 +2044,35 @@ sub describe_instances {
 						push @$product_codes, $product_code;
 					}
 				}
+
+            if ( grep { defined && length } $instance_elem->{networkInterfaceSet} ) {
+               foreach my $interface( @{$instance_elem->{networkInterfaceSet}{item}} ) {
+                  my $network_interface = Net::Amazon::EC2::NetworkInterfaceSet->new(
+                     network_interface_id => $interface->{networkInterfaceId},
+                     subnet_id            => $interface->{subnetId},
+                     vpc_id               => $interface->{vpcId},
+                     description          => $interface->{description},
+                     status               => $interface->{status},
+                     mac_address          => $interface->{macAddress},
+                     private_ip_address   => $interface->{privateIpAddress},
+                  );
+
+                  if ( grep { defined && length } $interface->{groupSet} ) {
+                     my $groups_set = [];
+                     foreach my $group( @{$interface->{groupSet}{item}} ) {
+                        my $group = Net::Amazon::EC2::GroupSet->new(
+                           group_id   => $group->{groupId},
+                           group_name => $group->{groupName},
+                        );
+                        push @$groups_set, $group;
+                     }
+
+                     $network_interface->{group_sets} = $groups_set;
+                  }
+
+                  push @$network_interfaces_set, $network_interface;
+               }
+            }
 
 				if ( grep { defined && length } $instance_elem->{blockDeviceMapping} ) {
 					foreach my $bdm ( @{$instance_elem->{blockDeviceMapping}{item}} ) {
@@ -2002,6 +2154,7 @@ sub describe_instances {
 					block_device_mapping	=> $block_device_mappings,
 					state_reason			=> $state_reason,
 					tag_set					=> $tag_sets,
+               network_interface_set => $network_interfaces_set,
 				);
 
 				if ($product_codes) {
@@ -2025,6 +2178,198 @@ sub describe_instances {
 	}
 
 	return $reservations;
+}
+
+=head2 describe_instance_status(%params)
+
+This method pulls a list of the instances based on some status filter.  The list can be modified by passing in some of the following parameters:
+
+=over
+
+=item InstanceId (optional)
+
+Either a scalar or an array ref can be passed in, will cause just these instances to be 'described'
+
+=item Filter (optional)
+
+The filters for only the matching instances to be 'described'.
+A filter tuple is an arrayref constsing one key and one or more values.
+The option takes one filter tuple, or an arrayref of multiple filter tuples.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::InstanceStatuses objects
+
+=cut
+
+sub describe_instance_status {
+    my $self = shift;
+    my %args = validate(
+        @_,
+        {
+            InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
+            Filter     => { type => ARRAYREF,          optional => 1 },
+            MaxResults => { type => SCALAR, optional => 1 },
+            NextToken  => { type => SCALAR, optional => 1 },
+        }
+    );
+
+# If we have a array ref of instances lets split them out into their InstanceId.n format
+    if ( ref( $args{InstanceId} ) eq 'ARRAY' ) {
+        my $instance_ids = delete $args{InstanceId};
+        my $count        = 1;
+        foreach my $instance_id ( @{$instance_ids} ) {
+            $args{ "InstanceId." . $count } = $instance_id;
+            $count++;
+        }
+    }
+
+    $self->_build_filters( \%args );
+    my $xml = $self->_sign( Action => 'DescribeInstanceStatus', %args );
+
+    my $instancestatuses;
+    my $token;
+
+    if ( grep { defined && length } $xml->{Errors} ) {
+        return $self->_parse_errors($xml);
+    }
+    else {
+        foreach my $instancestatus_elem ( @{ $xml->{instanceStatusSet}{item} } )
+        {
+            my $instance_status = $self->_create_describe_instance_status( $instancestatus_elem );
+            push @$instancestatuses, $instance_status;
+        }
+
+        if ( grep { defined && length } $xml->{nextToken} ) {
+            $token = $xml->{nextToken};
+            while(1) {
+                $args{NextToken} = $token;
+                $self->_build_filters( \%args );
+                my $tmp_xml = $self->_sign( Action => 'DescribeInstanceStatus', %args );
+                if ( grep { defined && length } $tmp_xml->{Errors} ) {
+                    return $self->_parse_errors($tmp_xml);
+                }
+                else {
+                    foreach my $tmp_instancestatus_elem ( @{ $tmp_xml->{instanceStatusSet}{item} } )
+                    {
+                        my $tmp_instance_status = $self->_create_describe_instance_status( $tmp_instancestatus_elem );
+                        push @$instancestatuses, $tmp_instance_status;
+                    }
+                    if ( grep { defined && length } $tmp_xml->{nextToken} ) {
+                        $token = $tmp_xml->{nextToken};
+                    }
+                    else {
+                        last;
+                    }
+                }
+            }
+        }
+    }
+
+    return $instancestatuses;
+}
+
+=head2 _create_describe_instance_status(%instanceElement)
+
+Returns a blessed object. Used internally for wrapping describe_instance_status nextToken calls
+
+=over
+
+=item InstanceStatusElement (required)
+
+The instance status element we want to build out and return
+
+=back
+
+Returns a Net::Amazon::EC2::InstanceStatuses object
+
+=cut
+
+sub _create_describe_instance_status {
+    my $self = shift;
+    my $instancestatus_elem = shift;
+
+    my $group_sets = [];
+
+    my $instancestatus_state = Net::Amazon::EC2::InstanceState->new(
+        code => $instancestatus_elem->{instanceState}{code},
+        name => $instancestatus_elem->{instanceState}{name},
+    );
+
+    foreach
+      my $events_arr ( @{ $instancestatus_elem->{eventsSet}{item} } )
+    {
+        my $events;
+        if ( grep { defined && length } $events_arr->{notAfter} ) {
+            $events = Net::Amazon::EC2::Events->new(
+                code        => $events_arr->{code},
+                description => $events_arr->{description},
+                not_before  => $events_arr->{notBefore},
+                not_after   => $events_arr->{notAfter},
+            );
+        }
+        else {
+            $events = Net::Amazon::EC2::Events->new(
+                code        => $events_arr->{code},
+                description => $events_arr->{description},
+                not_before  => $events_arr->{notBefore},
+            );
+        }
+        push @$group_sets, $events;
+    }
+
+    my $instancestatus_istatus;
+    if ( grep { defined && length }
+        $instancestatus_elem->{instanceStatus} )
+    {
+        my $details_set = [];
+        foreach my $details_arr (
+            @{ $instancestatus_elem->{instanceStatus}{details}{item} } )
+        {
+            my $details = Net::Amazon::EC2::Details->new(
+                status => $details_arr->{status},
+                name   => $details_arr->{name},
+            );
+            push @$details_set, $details;
+        }
+        $instancestatus_istatus =
+          Net::Amazon::EC2::InstanceStatus->new(
+            status  => $instancestatus_elem->{instanceStatus}{status},
+            details => $details_set,
+          );
+    }
+
+    my $instancestatus_sstatus;
+    if ( grep { defined && length }
+        $instancestatus_elem->{systemStatus} )
+    {
+        my $details_set = [];
+        foreach my $details_arr (
+            @{ $instancestatus_elem->{systemStatus}{details}{item} } )
+        {
+            my $details = Net::Amazon::EC2::Details->new(
+                status => $details_arr->{status},
+                name   => $details_arr->{name},
+            );
+            push @$details_set, $details;
+        }
+        $instancestatus_sstatus = Net::Amazon::EC2::SystemStatus->new(
+            status  => $instancestatus_elem->{systemStatus}{status},
+            details => $details_set,
+        );
+    }
+
+    my $instance_status = Net::Amazon::EC2::InstanceStatuses->new(
+        availability_zone => $instancestatus_elem->{availabilityZone},
+        events            => $group_sets,
+        instance_id       => $instancestatus_elem->{instanceId},
+        instance_state    => $instancestatus_state,
+        instance_status   => $instancestatus_istatus,
+        system_status     => $instancestatus_sstatus,
+
+    );
+
+    return $instance_status;
 }
 
 =head2 describe_instance_attribute(%params)
@@ -2446,6 +2791,8 @@ sub describe_security_groups {
 			my $group_name = $sec_grp->{groupName};
 			my $group_id = $sec_grp->{groupId};
 			my $group_description = $sec_grp->{groupDescription};
+			my $vpc_id = $sec_grp->{vpcId};
+			my $tag_set;
 			my $ip_permissions;
 			my $ip_permissions_egress;
 
@@ -2548,11 +2895,23 @@ sub describe_security_groups {
 				
 				push @$ip_permissions_egress, $ip_permission;
 			}
+			
+			
+			foreach my $sec_tag (@{$sec_grp->{tagSet}{item}})
+			{
+				my $tag = Net::Amazon::EC2::TagSet->new(
+					key => $sec_tag->{key},
+					value => $sec_tag->{value},
+				);
+				push @$tag_set, $tag;
+			}
 
 			my $security_group = Net::Amazon::EC2::SecurityGroup->new(
 				owner_id			=> $owner_id,
 				group_name			=> $group_name,
 				group_id			=> $group_id,
+				vpc_id 	 			=> $vpc_id,
+				tag_set 			=> $tag_set,
 				group_description	=> $group_description,
 				ip_permissions		=> $ip_permissions,
 				ip_permissions_egress	=> $ip_permissions_egress,
@@ -2696,6 +3055,18 @@ sub describe_snapshots {
 				$snap->{progress} = undef;
 			}
 
+			my $tag_sets;
+			foreach my $tag_arr (@{$snap->{tagSet}{item}}) {
+                if ( ref $tag_arr->{value} eq "HASH" ) {
+                    $tag_arr->{value} = "";
+                }
+				my $tag = Net::Amazon::EC2::TagSet->new(
+					key => $tag_arr->{key},
+					value => $tag_arr->{value},
+				);
+				push @$tag_sets, $tag;
+			}
+
  			my $snapshot = Net::Amazon::EC2::Snapshot->new(
  				snapshot_id		=> $snap->{snapshotId},
  				status			=> $snap->{status},
@@ -2706,6 +3077,7 @@ sub describe_snapshots {
  				volume_size		=> $snap->{volumeSize},
  				description		=> $snap->{description},
  				owner_alias		=> $snap->{ownerAlias},
+				tag_set			=> $tag_sets,
  			);
  			
  			push @$snapshots, $snapshot;
@@ -2803,6 +3175,106 @@ sub describe_volumes {
 		
 		return $volumes;
 	}
+}
+
+
+=head2 describe_subnets(%params)
+
+This method describes the subnets on this account. It takes the following parameters:
+
+=over
+
+=item SubnetId (optional)
+
+The id of a subnet to be described.  Can either be a scalar or an array ref.
+
+=item Filter.Name (optional)
+
+The name of the Filter.Name to be described. Can be either a scalar or an array ref.
+See http://docs.aws.amazon.com/AWSEC2/latest/APIReference/ApiReference-query-DescribeSubnets.html
+for available filters.
+
+=item Filter.Value (optional)
+
+The name of the Filter.Value to be described. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::DescribeSubnetResponse objects
+
+=cut
+
+sub describe_subnets {
+  my $self = shift;
+  my %args = validate( @_, {
+      'SubnetId'            => { type => ARRAYREF | SCALAR, optional => 1 },
+      'Filter.Name'         => { type => ARRAYREF | SCALAR, optional => 1 },
+      'Filter.Value'        => { type => ARRAYREF | SCALAR, optional => 1 },
+  });
+
+  if (ref ($args{'SubnetId'}) eq 'ARRAY') {
+    my $keys      = delete $args{'SubnetId'};
+    my $count     = 1;
+    foreach my $key (@{$keys}) {
+      $args{"SubnetId." . $count } = $key;
+      $count++;
+    }
+  }
+  if (ref ($args{'Filter.Name'}) eq 'ARRAY') {
+    my $keys      = delete $args{'Filter.Name'};
+    my $count     = 1;
+    foreach my $key (@{$keys}) {
+      $args{"Filter." . $count . ".Name"} = $key;
+      $count++;
+    }
+  }
+  if (ref ($args{'Filter.Value'}) eq 'ARRAY') {
+    my $keys      = delete $args{'Filter.Value'};
+    my $count     = 1;
+    foreach my $key (@{$keys}) {
+      $args{"Filter." . $count . ".Value"} = $key;
+      $count++;
+    }
+  }
+
+  my $xml = $self->_sign(Action  => 'DescribeSubnets', %args);
+
+  if ( grep { defined && length } $xml->{Errors} ) {
+    return $self->_parse_errors($xml);
+  }
+  else {
+    my $subnets;
+
+    foreach my $pair (@{$xml->{subnetSet}{item}}) {
+      my $tags;
+
+      foreach my $tag_arr (@{$pair->{tagSet}{item}}) {
+        if ( ref $tag_arr->{value} eq "HASH" ) {
+          $tag_arr->{value} = "";
+        }
+        my $tag = Net::Amazon::EC2::TagSet->new(
+          key => $tag_arr->{key},
+          value => $tag_arr->{value},
+        );
+        push @$tags, $tag;
+      }
+
+      my $subnet = Net::Amazon::EC2::DescribeSubnetResponse->new(
+        subnet_id                  => $pair->{subnetId},
+        state                      => $pair->{state},
+        vpc_id                     => $pair->{vpcId},
+        cidr_block                 => $pair->{cidrBlock},
+        available_ip_address_count => $pair->{availableIpAddressCount},
+        availability_zone          => $pair->{availabilityZone},
+        default_for_az             => $pair->{defaultForAz},
+        map_public_ip_on_launch    => $pair->{mapPublicIpOnLaunch},
+        tag_set                    => $tags,
+      );
+
+      push @$subnets, $subnet;
+    }
+    return $subnets;
+  }
 }
 
 =head2 describe_tags(%params)
@@ -3388,7 +3860,7 @@ Returns 1 if the reboot succeeded.
 sub reboot_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId	=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR | ARRAYREF },
 	});
 	
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -3544,6 +4016,27 @@ sub release_address {
 			return undef;
 		}
 	}
+}
+
+sub release_vpc_address {
+   my $self = shift;
+   my %args = validate( @_, {
+      AllocationId       => { type => SCALAR },
+   });
+
+   my $xml = $self->_sign(Action  => 'ReleaseAddress', %args);
+
+   if ( grep { defined && length } $xml->{Errors} ) {
+      return $self->_parse_errors($xml);
+   }
+   else {
+      if ($xml->{return} eq 'true') {
+         return 1;
+      }
+      else {
+         return undef;
+      }
+   }
 }
 
 =head2 reset_image_attribute(%params)
@@ -3729,7 +4222,8 @@ Returns 1 if rule is revoked successfully.
 sub revoke_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
-								GroupName					=> { type => SCALAR },
+								GroupName					=> { type => SCALAR, optional => 1 },
+								GroupId						=> { type => SCALAR, optional => 1 },
 								SourceSecurityGroupName 	=> { 
 																	type => SCALAR,
 																	depends => ['SourceSecurityGroupOwnerId'],

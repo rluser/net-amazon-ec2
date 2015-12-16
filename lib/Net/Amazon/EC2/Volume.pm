@@ -50,6 +50,10 @@ supports (only applies to volumes with a volume_type of io1).
 
 An array ref of Net:Amazon::EC2::Attachment objects.
 
+=item tag_set (optional)
+
+The associated tags (key:value) of the specified volume.
+
 =back
 
 =cut

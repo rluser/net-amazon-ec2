@@ -166,6 +166,7 @@ has 'architecture'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'root_device_name'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'root_device_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'block_device_mapping'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]]', required => 0 );
+has 'network_interface_set' => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::NetworkInterfaceSet]]', required => 0 );
 has 'tag_set'				=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
 has 'name' => (
 	is => 'ro',

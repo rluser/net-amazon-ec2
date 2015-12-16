@@ -62,6 +62,7 @@ has 'owner_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'volume_size'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'description'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'owner_alias'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'tag_set'		=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
