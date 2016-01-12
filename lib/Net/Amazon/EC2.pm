@@ -4434,6 +4434,31 @@ This is the virtual name for a blocked device to be attached, may pass in a scal
 
 This is the device name for a block device to be attached, may pass in a scalar or arrayref
 
+=item BlockDeviceMapping.Ebs.VolumeSize (optional)
+
+Specifies the size of the root block device as an integer (GB). If used, required
+that C<BlockDeviceMapping.DeviceName> also be specified. One may pass in a
+scalar or arrayref. This parameter will override the disk size settings implied
+by the C<InstanceType>, if used.
+
+Additional volume related parameters include,
+
+=over
+
+=item BlockDeviceMapping.Ebs.SnapshotId
+ 
+May pass in a scalar or arrayref.
+
+=item BlockDeviceMapping.Ebs.VolumeType
+
+May pass in a scalar or arrayref.
+
+=item BlockDeviceMapping.Ebs.DeleteOnTermination
+
+May pass in a scalar or arrayref.
+
+=back
+
 =item Encoding (optional)
 
 The encoding.
