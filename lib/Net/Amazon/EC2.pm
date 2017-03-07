@@ -11,7 +11,7 @@ use Digest::SHA qw(hmac_sha256 hmac_sha256_hex sha256_hex);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime);
-use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
+use Params::Validate qw(validate SCALAR ARRAYREF HASHREF BOOLEAN);
 use Data::Dumper qw(Dumper);
 use URI::Escape qw(uri_escape_utf8);
 use Encode qw(encode_utf8);
@@ -2228,10 +2228,11 @@ sub describe_instance_status {
     my %args = validate(
         @_,
         {
-            InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
-            Filter     => { type => ARRAYREF,          optional => 1 },
-            MaxResults => { type => SCALAR, optional => 1 },
-            NextToken  => { type => SCALAR, optional => 1 },
+            InstanceId          => { type => SCALAR | ARRAYREF, optional => 1 },
+            Filter              => { type => ARRAYREF,          optional => 1 },
+            MaxResults          => { type => SCALAR, optional => 1 },
+            NextToken           => { type => SCALAR, optional => 1 },
+            IncludeAllInstances => { type => BOOLEAN, optional => 1 },
         }
     );
 
