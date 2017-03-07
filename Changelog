@@ -1,3 +1,9 @@
+0.32   2017-03-06
+       Stephen Day      DRY code. Fix whitespace. (GH#47)
+       Brett Estrade    Fix POD for run_instance parameters (GH#48)
+       Maik Hentsche    Add AllInstances boolean to describe_instances (GH#53)
+       Mark Allen       Make signature version 4 the default (GH#52)
+
 0.31   2015-09-02    
                         No changes from 0.30_1; marking an "official"
                         release.

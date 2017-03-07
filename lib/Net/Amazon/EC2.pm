@@ -70,7 +70,7 @@ use Net::Amazon::EC2::InstanceStatuses;
 use Net::Amazon::EC2::SystemStatus;
 use Net::Amazon::EC2::NetworkInterfaceSet;
 
-$VERSION = '0.31';
+$VERSION = '0.32';
 
 =head1 NAME
 
@@ -79,7 +79,7 @@ environment.
 
 =head1 VERSION
 
-This is Net::Amazon::EC2 version 0.31
+This is Net::Amazon::EC2 version 0.32
 
 EC2 Query API version: '2014-06-15'
 
@@ -211,7 +211,7 @@ has 'SecurityToken' => (
 	}
 );
 has 'debug'             => ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'signature_version' => ( is => 'ro', isa => 'Int', required => 1, default => 2 );
+has 'signature_version' => ( is => 'ro', isa => 'Int', required => 1, default => 4 );
 has 'version'           => ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
 has 'region'            => ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
 has 'ssl'               => ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
@@ -350,8 +350,8 @@ sub _sign_v4 {
 	my $signed_headers   = "content-type;host;x-amz-date";
 	# Assemble the content
 	$args{Version}       = $self->version;
-	if ($self->has_temp_creds) {
-		$args{'X-Amz-Security-Token'} = $self->temp_creds->{'Token'};
+	if ($self->has_temp_creds || $self->has_SecurityToken) {
+		$args{'X-Amz-Security-Token'} = $self->SecurityToken;
 	}
 	my @content_elements;
 	foreach my $key (sort keys %args) {
