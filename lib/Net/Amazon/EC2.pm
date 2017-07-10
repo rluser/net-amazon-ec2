@@ -2091,7 +2091,7 @@ sub describe_instances {
 					}
 				}
 
-				if ( grep { defined && length } $instance_elem->{stateReason} ) {
+				if ( grep { defined && length && $_->{code} && $_->{message} } $instance_elem->{stateReason} ) {
 					$state_reason = Net::Amazon::EC2::StateReason->new(
 						code	=> $instance_elem->{stateReason}{code},
 						message	=> $instance_elem->{stateReason}{message},
