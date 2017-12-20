@@ -4329,7 +4329,7 @@ Up to 2 EC2 Compute Units (for short periodic bursts), 32-bit or 64-bit, 613MB R
 
 =item c1.medium: High-CPU Medium Instance
 
-5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit or 64-bit, 1.7GB RAM, 350GB disk
+5 EC2 Compute Units (2 virtual cores with 2.5 EC2 Compute Units each). 32-bit or 64-bit, 1.7GB RAM, 350GB disk
 
 =item c1.xlarge: High-CPU Extra Large Instance
 
