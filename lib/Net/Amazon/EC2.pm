@@ -70,7 +70,7 @@ use Net::Amazon::EC2::InstanceStatuses;
 use Net::Amazon::EC2::SystemStatus;
 use Net::Amazon::EC2::NetworkInterfaceSet;
 
-$VERSION = '0.33';
+$VERSION = '0.34';
 
 =head1 NAME
 
