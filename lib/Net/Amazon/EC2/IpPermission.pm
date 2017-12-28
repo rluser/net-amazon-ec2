@@ -47,8 +47,8 @@ or both can be specified as -1, which is a wildcard.
 =cut
 
 has 'ip_protocol'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'from_port'     => ( is => 'ro', isa => 'Int', required => 1 );
-has 'to_port'       => ( is => 'ro', isa => 'Int', required => 1 );
+has 'from_port'     => ( is => 'ro', isa => 'Maybe[Int]', required => 1 );
+has 'to_port'       => ( is => 'ro', isa => 'Maybe[Int]', required => 1 );
 has 'ip_ranges'     => ( 
     is          => 'rw', 
     isa         => 'ArrayRef[Net::Amazon::EC2::IpRange]',

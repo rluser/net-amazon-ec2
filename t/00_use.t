@@ -49,6 +49,11 @@ BEGIN {
 		Net::Amazon::EC2::EbsBlockDevice
 		Net::Amazon::EC2::DescribeTags
 		Net::Amazon::EC2::TagSet
+        Net::Amazon::EC2::Details
+        Net::Amazon::EC2::Events
+        Net::Amazon::EC2::InstanceStatus
+        Net::Amazon::EC2::InstanceStatuses
+        Net::Amazon::EC2::SystemStatus
 	);
 
 	plan tests => scalar @modules;

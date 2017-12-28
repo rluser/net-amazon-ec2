@@ -17,16 +17,18 @@ A class containing information about a tag.
 
 The key of the tag.
 
-=item value (required)
+=item value 
 
-The value of the tag.
+The value of the tag. (May be undefined if there is no value for a given key.)
 
 =cut
 
 has 'key'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'value' => ( is => 'ro', isa => 'Str', required => 1 );
+has 'value' => ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
 
 __PACKAGE__->meta->make_immutable();
+
+=back
 
 =head1 AUTHOR
 

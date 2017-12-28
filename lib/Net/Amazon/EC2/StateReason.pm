@@ -17,8 +17,6 @@ A class representing additional information on the reason for the current state 
 
 A code for the state change reason.
 
-=back
-
 =item message (required)
 
 A message providing additional information about the state.
@@ -27,8 +25,8 @@ A message providing additional information about the state.
 
 =cut
 
-has 'code'		=> ( is => 'ro', isa => 'Int|Str' );
-has 'message' 	=> ( is => 'ro', isa => 'Str' );
+has 'code'		=> ( is => 'ro', isa => 'Maybe[Int|Str]' );
+has 'message' 	=> ( is => 'ro', isa => 'Maybe[Str]' );
 
 __PACKAGE__->meta->make_immutable();
 
